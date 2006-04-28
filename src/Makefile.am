@@ -12,3 +12,8 @@ if BUILD_WITH_LIBSOCKET
 liboping_la_LDFLAGS += -lsocket
 endif
 liboping_la_SOURCES = liboping.h liboping.c
+
+bin_PROGRAMS = oping
+
+oping_SOURCES = oping.c
+oping_LDADD = liboping.la
