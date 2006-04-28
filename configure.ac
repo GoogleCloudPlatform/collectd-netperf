@@ -37,7 +37,7 @@ AC_CHECK_HEADERS(sys/types.h)
 AC_CHECK_HEADERS(sys/stat.h)
 AC_HEADER_TIME
 AC_CHECK_HEADERS(sys/socket.h)
-AC_CHECK_HEADERS(sys/netdb.h)
+AC_CHECK_HEADERS(netdb.h)
 
 # This sucks, but what can I do..?
 AC_CHECK_HEADERS(netinet/in_systm.h, [], [],

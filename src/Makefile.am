@@ -4,7 +4,7 @@ if COMPILER_IS_GCC
 AM_CFLAGS = -Wall -Werror
 endif
 
-noinst_LTLIBRARIES = liboping.la
+lib_LTLIBRARIES = liboping.la
 
 #liboping_la_CFLAGS = 
 liboping_la_LDFLAGS = -avoid-version
