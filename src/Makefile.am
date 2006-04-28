@@ -4,6 +4,7 @@ if COMPILER_IS_GCC
 AM_CFLAGS = -Wall -Werror
 endif
 
+include_HEADERS = liboping.h
 lib_LTLIBRARIES = liboping.la
 
 #liboping_la_CFLAGS = 
