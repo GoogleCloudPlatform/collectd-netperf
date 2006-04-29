@@ -257,9 +257,11 @@ int main (int argc, char **argv)
 		double temp_sec;
 		double temp_nsec;
 
-		temp_sec = modf (opt_interval, &temp_nsec);
+		temp_nsec = modf (opt_interval, &temp_sec);
 		ts_int.tv_sec  = (time_t) temp_sec;
 		ts_int.tv_nsec = (long) (temp_nsec * 1000000000L);
+
+		/* printf ("ts_int = %i.%09li\n", (int) ts_int.tv_sec, ts_int.tv_nsec); */
 	}
 
 	if (opt_addrfamily != PING_DEF_AF)
@@ -330,6 +332,7 @@ int main (int argc, char **argv)
 
 		time_calc (&ts_wait, &ts_int, &tv_begin, &tv_end);
 
+		/* printf ("Sleeping for %i.%09li seconds\n", (int) ts_wait.tv_sec, ts_wait.tv_nsec); */
 		while ((status = nanosleep (&ts_wait, &ts_wait)) != 0)
 		{
 			if (errno != EINTR)
