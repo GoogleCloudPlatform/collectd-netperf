@@ -69,8 +69,14 @@ int ping_host_remove (pingobj_t *obj, const char *host);
 pingobj_iter_t *ping_iterator_get (pingobj_t *obj);
 pingobj_iter_t *ping_iterator_next (pingobj_iter_t *iter);
 
-const char *ping_iterator_get_host (pingobj_iter_t *iter);
-double ping_iterator_get_latency (pingobj_iter_t *iter);
+#define PING_INFO_HOSTNAME 1
+#define PING_INFO_ADDRESS  2
+#define PING_INFO_FAMILY   3
+#define PING_INFO_LATENCY  4
+#define PING_INFO_SEQUENCE 5
+#define PING_INFO_IDENT    6
+int ping_iterator_get_info (pingobj_iter_t *iter, int info,
+		void *buffer, size_t *buffer_len);
 
 const char *ping_get_error (pingobj_t *obj);
 
