@@ -80,4 +80,7 @@ int ping_iterator_get_info (pingobj_iter_t *iter, int info,
 
 const char *ping_get_error (pingobj_t *obj);
 
+void *ping_iterator_get_context (pingobj_iter_t *iter);
+void  ping_iterator_set_context (pingobj_iter_t *iter, void *context);
+
 #endif /* OCTO_PING_H */

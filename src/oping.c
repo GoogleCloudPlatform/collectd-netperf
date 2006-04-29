@@ -52,9 +52,43 @@
 
 #include <liboping.h>
 
+typedef struct ping_context
+{
+	char host[NI_MAXHOST];
+	char addr[NI_MAXHOST];
+
+	int req_sent;
+	int req_rcvd;
+	
+	double latency_min;
+	double latency_max;
+	double latency_total;
+} ping_context_t;
+
 static double opt_interval   = 1.0;
 static int    opt_addrfamily = PING_DEF_AF;
 static int    opt_count      = -1;
+
+ping_context_t *context_create (void)
+{
+	ping_context_t *ret;
+
+	if ((ret = malloc (sizeof (ping_context_t))) == NULL)
+		return (NULL);
+
+	memset (ret, '\0', sizeof (ping_context_t));
+
+	ret->latency_min   = -1.0;
+	ret->latency_max   = -1.0;
+	ret->latency_total = 0.0;
+
+	return (ret);
+}
+
+void context_destroy (ping_context_t *context)
+{
+	free (context);
+}
 
 void usage_exit (const char *name)
 {
@@ -109,28 +143,11 @@ int read_options (int argc, char **argv)
 
 void print_host (pingobj_iter_t *iter)
 {
-	char     host[NI_MAXHOST];
-	char     addr[NI_MAXHOST];
 	double   latency;
 	uint16_t sequence;
 	size_t   buffer_len;
-
-	buffer_len = sizeof (host);
-	if (ping_iterator_get_info (iter, PING_INFO_HOSTNAME,
-				host, &buffer_len) != 0)
-	{
-		fprintf (stderr, "ping_iterator_get_info failed.\n");
-		return;
-	}
-
-	buffer_len = sizeof (addr);
-	if (ping_iterator_get_info (iter, PING_INFO_ADDRESS,
-				addr, &buffer_len) != 0)
-	{
-		fprintf (stderr, "ping_iterator_get_info failed.\n");
-		return;
-	}
-
+	ping_context_t *context;
+	
 	buffer_len = sizeof (latency);
 	ping_iterator_get_info (iter, PING_INFO_LATENCY,
 			&latency, &buffer_len);
@@ -139,8 +156,29 @@ void print_host (pingobj_iter_t *iter)
 	ping_iterator_get_info (iter, PING_INFO_SEQUENCE,
 			&sequence, &buffer_len);
 
-	printf ("echo reply from %s (%s): icmp_seq=%u time=%.1f ms\n",
-			host, addr, (unsigned int) sequence, latency);
+	context = (ping_context_t *) ping_iterator_get_context (iter);
+
+	context->req_sent++;
+	if (latency > 0.0)
+	{
+		context->req_rcvd++;
+		context->latency_total += latency;
+
+		if ((context->latency_max < 0.0) || (context->latency_max < latency))
+			context->latency_max = latency;
+		if ((context->latency_min < 0.0) || (context->latency_min > latency))
+			context->latency_min = latency;
+
+		printf ("echo reply from %s (%s): icmp_seq=%u time=%.1f ms\n",
+				context->host, context->addr,
+				(unsigned int) sequence, latency);
+	}
+	else
+	{
+		printf ("echo reply from %s (%s): icmp_seq=%u timeout\n",
+				context->host, context->addr,
+				(unsigned int) sequence);
+	}
 }
 
 void time_normalize (struct timespec *ts)
@@ -232,8 +270,26 @@ int main (int argc, char **argv)
 		if (ping_host_add (ping, argv[i]) > 0)
 		{
 			fprintf (stderr, "ping_host_add (%s) failed\n", argv[i]);
-			return (1);
+			continue;
 		}
+	}
+
+	for (iter = ping_iterator_get (ping);
+			iter != NULL;
+			iter = ping_iterator_next (iter))
+	{
+		ping_context_t *context;
+		size_t buffer_size;
+
+		context = context_create ();
+
+		buffer_size = sizeof (context->host);
+		ping_iterator_get_info (iter, PING_INFO_HOSTNAME, context->host, &buffer_size);
+
+		buffer_size = sizeof (context->addr);
+		ping_iterator_get_info (iter, PING_INFO_ADDRESS, context->addr, &buffer_size);
+
+		ping_iterator_set_context (iter, (void *) context);
 	}
 
 	while (1)
@@ -283,6 +339,29 @@ int main (int argc, char **argv)
 			}
 		}
 	} /* while (opt_count != 0) */
+
+	for (iter = ping_iterator_get (ping);
+			iter != NULL;
+			iter = ping_iterator_next (iter))
+	{
+		ping_context_t *context;
+
+		context = ping_iterator_get_context (iter);
+
+		printf ("\n--- %s ping statistics ---\n"
+				"%i packets transmitted, %i received, %.2f%% packet loss, time %.1fms\n"
+				"rtt min/avg/max/mdev = %.3f/%.3f/%.3f/%.3f ms\n",
+				context->host, context->req_sent, context->req_rcvd,
+				100.0 * (context->req_sent - context->req_rcvd) / ((double) context->req_sent),
+				context->latency_total,
+				context->latency_min,
+				context->latency_total / ((double) context->req_rcvd),
+				context->latency_max,
+				0.00);
+
+		ping_iterator_set_context (iter, NULL);
+		free (context);
+	}
 
 	ping_destroy (ping);
 

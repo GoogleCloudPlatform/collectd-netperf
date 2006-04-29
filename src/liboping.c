@@ -109,6 +109,8 @@ struct pinghost
 	struct timeval          *timer;
 	double                   latency;
 
+	void                    *context;
+
 	struct pinghost         *next;
 };
 
@@ -1135,4 +1137,14 @@ int ping_iterator_get_info (pingobj_iter_t *iter, int info,
 	}
 
 	return (ret);
+}
+
+void *ping_iterator_get_context (pingobj_iter_t *iter)
+{
+	return (iter->context);
+}
+
+void ping_iterator_set_context (pingobj_iter_t *iter, void *context)
+{
+	iter->context = context;
 }
