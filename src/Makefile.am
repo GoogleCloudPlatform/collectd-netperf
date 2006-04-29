@@ -18,3 +18,7 @@ bin_PROGRAMS = oping
 
 oping_SOURCES = oping.c
 oping_LDADD = liboping.la
+oping_LDFLAGS = -lm
+if BUILD_WITH_LIBRT
+oping_LDFLAGS += -lrt
+endif
