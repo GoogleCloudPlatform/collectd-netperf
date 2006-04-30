@@ -50,6 +50,10 @@
 # include <netdb.h> /* NI_MAXHOST */
 #endif
 
+#if HAVE_SIGNAL_H
+# include <signal.h>
+#endif
+
 #include <liboping.h>
 
 typedef struct ping_context
@@ -68,6 +72,12 @@ typedef struct ping_context
 static double opt_interval   = 1.0;
 static int    opt_addrfamily = PING_DEF_AF;
 static int    opt_count      = -1;
+
+void sigint_handler (int signal)
+{
+	/* Exit the loop */
+	opt_count = 0;
+}
 
 ping_context_t *context_create (void)
 {
@@ -233,6 +243,8 @@ int main (int argc, char **argv)
 	pingobj_t      *ping;
 	pingobj_iter_t *iter;
 
+	struct sigaction sigint_action;
+
 	struct timeval  tv_begin;
 	struct timeval  tv_end;
 	struct timespec ts_wait;
@@ -240,7 +252,6 @@ int main (int argc, char **argv)
 
 	int optind;
 	int i;
-
 
 	optind = read_options (argc, argv);
 
@@ -294,12 +305,17 @@ int main (int argc, char **argv)
 		ping_iterator_set_context (iter, (void *) context);
 	}
 
-	while (1)
+	memset (&sigint_action, '\0', sizeof (sigint_action));
+	sigint_action.sa_handler = sigint_handler;
+	if (sigaction (SIGINT, &sigint_action, NULL) < 0)
+	{
+		perror ("sigaction");
+		return (1);
+	}
+
+	while (opt_count != 0)
 	{
 		int status;
-
-		if (opt_count > 0)
-			opt_count--;
 
 		if (gettimeofday (&tv_begin, NULL) < 0)
 		{
@@ -321,7 +337,8 @@ int main (int argc, char **argv)
 		}
 		fflush (stdout);
 
-		if (opt_count == 0)
+		/* Don't sleep in the last iteration */
+		if (opt_count == 1)
 			break;
 
 		if (gettimeofday (&tv_end, NULL) < 0)
@@ -340,7 +357,15 @@ int main (int argc, char **argv)
 				perror ("nanosleep");
 				break;
 			}
+			else if (opt_count == 0)
+			{
+				/* sigint */
+				break;
+			}
 		}
+
+		if (opt_count > 0)
+			opt_count--;
 	} /* while (opt_count != 0) */
 
 	for (iter = ping_iterator_get (ping);
