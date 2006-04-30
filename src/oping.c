@@ -253,6 +253,12 @@ int main (int argc, char **argv)
 	int optind;
 	int i;
 
+	if (geteuid () != 0)
+	{
+		fprintf (stderr, "Need superuser privileges to open a RAW socket. Sorry.\n");
+		return (1);
+	}
+
 	optind = read_options (argc, argv);
 
 	if (optind >= argc)
