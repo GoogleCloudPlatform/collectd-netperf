@@ -36,8 +36,9 @@ values are 1 through 255. Default is B<PING_DEF_TTL>.
 =item B<PING_OPT_AF>
 
 The address family to use. The memory pointed to by I<val> is interpreted as an
-integer and must be either B<AF_UNSPEC>, B<AF_INET>, or B<AF_INET6>. Default is
-B<PING_DEF_AF>.
+integer and must be either B<AF_UNSPEC>, B<AF_INET>, or B<AF_INET6>. This
+option only effects hosts that are being added B<after> this option has been
+set. Default is B<PING_DEF_AF>.
 
 =back
 
