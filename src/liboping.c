@@ -85,7 +85,7 @@
 # include <netinet/icmp6.h>
 #endif
 
-#include "liboping.h"
+#include "oping.h"
 
 #if DEBUG
 # define dprintf(...) printf ("%s[%4i]: %-20s: ", __FILE__, __LINE__, __FUNCTION__); printf (__VA_ARGS__)

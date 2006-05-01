@@ -54,7 +54,7 @@
 # include <signal.h>
 #endif
 
-#include <liboping.h>
+#include "oping.h"
 
 typedef struct ping_context
 {
