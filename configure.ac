@@ -140,4 +140,4 @@ AC_CHECK_FUNCS(nanosleep, [],
 		AC_MSG_ERROR(cannot find nanosleep)))
 AM_CONDITIONAL(BUILD_WITH_LIBRT, test "x$nanosleep_needs_rt" = "xyes")
 
-AC_OUTPUT(Makefile src/Makefile)
+AC_OUTPUT(Makefile src/Makefile src/mans/Makefile)

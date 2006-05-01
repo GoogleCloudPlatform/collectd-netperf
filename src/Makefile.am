@@ -1,5 +1,7 @@
 AUTOMAKE_OPTIONS = foreign no-dependencies
 
+SUBDIRS = mans
+
 if COMPILER_IS_GCC
 AM_CFLAGS = -Wall -Werror
 endif
