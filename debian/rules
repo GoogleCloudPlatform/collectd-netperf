@@ -76,8 +76,6 @@ install-arch:
 	mv -v $(CURDIR)/debian/tmp/usr/lib/*.so $(CURDIR)/debian/liboping/usr/lib/
 	mv -v $(CURDIR)/debian/tmp/usr/lib/*.{a,la} $(CURDIR)/debian/liboping-dev/usr/lib/
 	mv -v $(CURDIR)/debian/tmp/usr/include/*.h $(CURDIR)/debian/liboping-dev/usr/include/
-	#mv -v $(CURDIR)/debian/tmp/usr/share/man/man{1,3} $(CURDIR)/debian/liboping-dev/usr/share/man/
-	mv -v $(CURDIR)/debian/tmp/usr/share/man/man3/* $(CURDIR)/debian/liboping-dev/usr/share/man/man3/
 	mv -v $(CURDIR)/debian/tmp/usr/bin/* $(CURDIR)/debian/oping/usr/bin/
 
 	dh_install -s
