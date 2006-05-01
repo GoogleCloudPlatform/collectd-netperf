@@ -76,10 +76,9 @@ ping_iterator_get_context(3)
 =head1 LICENSE
 
 liboping is licensed under the GPLv2. No other version of the license is
-applicable. If you want to link a non-GPL-compliant program with liboping
-contact the author for double-licensing options.
+applicable.
 
-=head1 CONTACT
+=head1 CONTACT / AUTHOR
 
 liboping is written by Florian octo Forster E<lt>octo at verplant.orgE<gt>.
 It's homepage can be found at L<http://verplant.org/liboping/>.
