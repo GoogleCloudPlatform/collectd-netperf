@@ -1,2 +1,3 @@
 - Write manpage
-- Catch SIGINT in `oping'
+- Rename `liboping.h' to `oping.h'
+

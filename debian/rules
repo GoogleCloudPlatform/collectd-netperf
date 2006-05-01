@@ -22,7 +22,7 @@ DEB_HOST_GNU_TYPE   ?= $(shell dpkg-architecture -qDEB_HOST_GNU_TYPE)
 DEB_BUILD_GNU_TYPE  ?= $(shell dpkg-architecture -qDEB_BUILD_GNU_TYPE)
 
 
-CFLAGS = -Wall -Werror -g
+CFLAGS = -Wall -g
 
 ifneq (,$(findstring noopt,$(DEB_BUILD_OPTIONS)))
 	CFLAGS += -O0
@@ -67,7 +67,7 @@ endif
 ifneq "$(wildcard /usr/share/misc/config.guess)" ""
 	cp -f /usr/share/misc/config.guess config.guess
 endif
-
+	rm -rf $(CURDIR)/debian/tmp || true
 
 	dh_clean 
 
@@ -88,9 +88,13 @@ install-arch:
 	dh_testdir
 	dh_testroot
 	dh_clean -k -s 
-	dh_installdirs -s
+	dh_installdirs --all
 
-	$(MAKE) install DESTDIR=$(CURDIR)/debian/liboping
+	$(MAKE) install DESTDIR=$(CURDIR)/debian/tmp
+	mv -v $(CURDIR)/debian/tmp/usr/lib/*.so $(CURDIR)/debian/liboping/usr/lib/
+	mv -v $(CURDIR)/debian/tmp/usr/lib/*.{a,la} $(CURDIR)/debian/liboping-dev/usr/lib/
+	mv -v $(CURDIR)/debian/tmp/usr/include/*.h $(CURDIR)/debian/liboping-dev/usr/include/
+	mv -v $(CURDIR)/debian/tmp/usr/bin/* $(CURDIR)/debian/oping/usr/bin/
 
 	dh_install -s
 # Must not depend on anything. This is to be called by
