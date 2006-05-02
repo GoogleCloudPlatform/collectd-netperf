@@ -983,6 +983,8 @@ int ping_host_add (pingobj_t *obj, const char *host)
 			continue;
 		}
 
+		/* TODO: Move this to a static function `ping_open_socket' and
+		 * call it whenever the socket dies. */
 		ph->fd = socket (ai_ptr->ai_family, ai_ptr->ai_socktype, ai_ptr->ai_protocol);
 		if (ph->fd == -1)
 		{
