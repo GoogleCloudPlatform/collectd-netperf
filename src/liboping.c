@@ -522,7 +522,8 @@ static int ping_receive_all (pingobj_t *obj)
  * +-> ping_send_one_ipv4                                                    *
  * `-> ping_send_one_ipv6                                                    *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
-static ssize_t ping_sendto (pinghost_t *ph, const void *buf, size_t buflen)
+static ssize_t ping_sendto (pingobj_t *obj, pinghost_t *ph,
+		const void *buf, size_t buflen)
 {
 	ssize_t ret;
 
@@ -535,10 +536,13 @@ static ssize_t ping_sendto (pinghost_t *ph, const void *buf, size_t buflen)
 	ret = sendto (ph->fd, buf, buflen, 0,
 			(struct sockaddr *) ph->addr, ph->addrlen);
 
+	if (ret < 0)
+		ping_set_error (obj, "sendto", strerror (errno));
+
 	return (ret);
 }
 
-static int ping_send_one_ipv4 (pinghost_t *ph)
+static int ping_send_one_ipv4 (pingobj_t *obj, pinghost_t *ph)
 {
 	struct icmp *icmp4;
 	int status;
@@ -570,7 +574,7 @@ static int ping_send_one_ipv4 (pinghost_t *ph)
 
 	dprintf ("Sending ICMPv4 package with ID 0x%04x\n", ph->ident);
 
-	status = ping_sendto (ph, buf, buflen);
+	status = ping_sendto (obj, ph, buf, buflen);
 	if (status < 0)
 	{
 		perror ("ping_sendto");
@@ -582,7 +586,7 @@ static int ping_send_one_ipv4 (pinghost_t *ph)
 	return (0);
 }
 
-static int ping_send_one_ipv6 (pinghost_t *ph)
+static int ping_send_one_ipv6 (pingobj_t *obj, pinghost_t *ph)
 {
 	struct icmp6_hdr *icmp6;
 	int status;
@@ -613,7 +617,7 @@ static int ping_send_one_ipv6 (pinghost_t *ph)
 
 	dprintf ("Sending ICMPv6 package with ID 0x%04x\n", ph->ident);
 
-	status = ping_sendto (ph, buf, buflen);
+	status = ping_sendto (obj, ph, buf, buflen);
 	if (status < 0)
 	{
 		perror ("ping_sendto");
@@ -625,9 +629,15 @@ static int ping_send_one_ipv6 (pinghost_t *ph)
 	return (0);
 }
 
-static int ping_send_all (pinghost_t *ph)
+static int ping_send_all (pingobj_t *obj)
 {
+	pinghost_t *ph;
 	pinghost_t *ptr;
+
+	int ret;
+
+	ret = 0;
+	ph = obj->head;
 
 	for (ptr = ph; ptr != NULL; ptr = ptr->next)
 	{
@@ -637,6 +647,7 @@ static int ping_send_all (pinghost_t *ph)
 		{
 			dprintf ("gettimeofday: %s\n", strerror (errno));
 			timerclear (ptr->timer);
+			ret--;
 			continue;
 		}
 		else
@@ -647,18 +658,20 @@ static int ping_send_all (pinghost_t *ph)
 		if (ptr->addrfamily == AF_INET6)
 		{	
 			dprintf ("Sending ICMPv6 echo request to `%s'\n", ptr->hostname);
-			if (ping_send_one_ipv6 (ptr) != 0)
+			if (ping_send_one_ipv6 (obj, ptr) != 0)
 			{
 				timerclear (ptr->timer);
+				ret--;
 				continue;
 			}
 		}
 		else if (ptr->addrfamily == AF_INET)
 		{
 			dprintf ("Sending ICMPv4 echo request to `%s'\n", ptr->hostname);
-			if (ping_send_one_ipv4 (ptr) != 0)
+			if (ping_send_one_ipv4 (obj, ptr) != 0)
 			{
 				timerclear (ptr->timer);
+				ret--;
 				continue;
 			}
 		}
@@ -666,14 +679,14 @@ static int ping_send_all (pinghost_t *ph)
 		{
 			dprintf ("Unknown address family: %i\n", ptr->addrfamily);
 			timerclear (ptr->timer);
+			ret--;
 			continue;
 		}
 
 		ptr->sequence++;
 	}
 
-	/* FIXME */
-	return (0);
+	return (ret);
 }
 
 /*
@@ -853,7 +866,7 @@ int ping_send (pingobj_t *obj)
 {
 	int ret;
 
-	if (ping_send_all (obj->head) < 0)
+	if (ping_send_all (obj) < 0)
 		return (-1);
 
 	if ((ret = ping_receive_all (obj)) < 0)
@@ -1088,8 +1101,11 @@ int ping_iterator_get_info (pingobj_iter_t *iter, int info,
 					NI_NUMERICHOST);
 			if (ret != 0)
 			{
-				if ((ret == EAI_OVERFLOW)
-						|| (ret == EAI_MEMORY))
+				if ((ret == EAI_MEMORY)
+#ifdef EAI_OVERFLOW
+						|| (ret == EAI_OVERFLOW)
+#endif
+				   )
 					ret = ENOMEM;
 				else if (ret == EAI_SYSTEM)
 					/* XXX: Not thread-safe! */
