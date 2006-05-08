@@ -5,10 +5,10 @@ http://verplant.org/liboping/
 About
 -----
 
- liboping was inspired by ping, libping and fping: It differs from these
- existing solutions in that it can `ping' multiple hosts in parallel using IPv4
- or IPv6 transparently. Other design principles were an object oriented
- interface, simplicity and extensibility.
+  liboping was inspired by ping, libping and fping: It differs from these
+  existing solutions in that it can `ping' multiple hosts in parallel using
+  IPv4 or IPv6 transparently. Other design principles were an object oriented
+  interface, simplicity and extensibility.
 
 
 Features
@@ -20,7 +20,6 @@ Features
 
   * Object oriented interface.
 
-  * More? FIXME
 
 Author
 ------
