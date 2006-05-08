@@ -14,7 +14,7 @@ The B<ping_setopt> method sets options that effect all hosts associated with
 the object I<obj> and hosts that are yet to be added to the object.
 
 The I<obj> argument is a pointer to an liboping object, as returned by
-ping_construct(3).
+L<ping_construct(3)>.
 
 The I<opt> argument specifies the option to set. Use one of the following
 constants:
@@ -52,7 +52,8 @@ B<ping_setopt> returns zero upon success or less than zero upon failure.
 
 =head1 SEE ALSO
 
-ping_construct(3)
+L<ping_construct(3)>,
+L<liboping(3)>
 
 =head1 AUTHOR
 

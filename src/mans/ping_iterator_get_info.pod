@@ -16,8 +16,8 @@ ping_iterator_get_info - Constructor for the liboping class
 The B<ping_iterator_get_info> method can be used on an host iterator to return
 various information about the current host.
 
-The I<iter> argument is an iterator as returned by ping_iterator_get(3) or
-ping_iterator_next(3).
+The I<iter> argument is an iterator as returned by L<ping_iterator_get(3)> or
+L<ping_iterator_next(3)>.
 
 The I<info> argument specifies the type of information returned. Use the
 following defines:
@@ -28,8 +28,8 @@ following defines:
 
 Return the hostname of the host the iterator points to. Since the name is
 looked up using the socket address this may differ from the hostname passed to
-ping_host_add(3). The hostname is actually looked up every time you call this
-method, no cache is involved within liboping.
+L<ping_host_add(3)>. The hostname is actually looked up every time you call
+this method, no cache is involved within liboping.
 
 It is recommended to include C<netdb.h> and allocate B<NI_MAXHOST> bytes of
 buffer.
@@ -85,8 +85,8 @@ untouched. The return value is B<ENOMEM> in this case.
 
 =head1 SEE ALSO
 
-ping_iterator_get(3),
-liboping(3)
+L<ping_iterator_get(3)>,
+L<liboping(3)>
 
 =head1 AUTHOR
 

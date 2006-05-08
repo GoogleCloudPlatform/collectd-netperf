@@ -20,7 +20,7 @@ was encountered yet.
 
 =head1 SEE ALSO
 
-liboping(3)
+L<liboping(3)>
 
 =head1 AUTHOR
 

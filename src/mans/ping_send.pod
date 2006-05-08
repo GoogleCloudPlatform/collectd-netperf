@@ -14,24 +14,25 @@ The B<ping_send> method is the actual workhorse of this library. It crafts ICMP
 packets for the hosts associated with I<obj> and sends them via the
 corresponding sockets. It then waits for echo responses and receives them,
 writing latency information for each host. The method returns after all echo
-replies have been read or the timeout (set with ping_setopt(3)) is reached.
+replies have been read or the timeout (set with L<ping_setopt(3)>) is reached.
 
 After this function returns you will most likely iterate over all hosts using
-ping_iterator_get(3) and ping_iterator_next (described in the same manpage) and
-call ping_iterator_get_info(3) on each host.
+L<ping_iterator_get(3)> and ping_iterator_next (described in the same manpage)
+and call L<ping_iterator_get_info(3)> on each host.
 
 =head1 RETURN VALUE
 
 B<ping_send> returns the value of echo replies received or a value less than
-zero if an error occured. Use ping_get_error(3) to receive an error message.
+zero if an error occured. Use L<ping_get_error(3)> to receive an error message.
 
 =head1 SEE ALSO
 
-ping_construct(3),
-ping_setopt(3),
-ping_iterator_get(3),
-ping_iterator_get_info(3),
-ping_get_error(3)
+L<ping_construct(3)>,
+L<ping_setopt(3)>,
+L<ping_iterator_get(3)>,
+L<ping_iterator_get_info(3)>,
+L<ping_get_error(3)>,
+L<liboping(3)>
 
 =head1 AUTHOR
 

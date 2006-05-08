@@ -9,7 +9,7 @@ B<oping> [B<-4> | B<-6>] [B<-c> I<count>] [B<-i> I<interval>] I<host> [I<host> [
 =head1 DESCRIPTION
 
 oping uses ICMPv4 or ICMPv6 ECHO_REQUEST packets to measure a hosts
-reachability and the network latency. In contrast to the original ping(8)
+reachability and the network latency. In contrast to the original L<ping(8)>
 utility B<oping> can send ICMP packets to multiple hosts in parallel and wait
 for all ECHO_RESPONSE packets to arrive. In contrast to the
 B<fping> utility (URL is listed in L<"SEE ALSO">) B<oping> can use both, IPv4
@@ -48,7 +48,7 @@ floating-point number to specify sub-second precision.
 
 =head1 SEE ALSO
 
-ping(8), L<http://www.fping.com/>
+L<ping(8)>, L<http://www.fping.com/>, L<liboping(3)>
 
 =head1 AUTHOR
 
