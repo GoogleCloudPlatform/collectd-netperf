@@ -14,6 +14,10 @@
 #include "grpc/support/host_port.h"
 #include "grpc/support/sync.h"
 
+#include "nanopb/pb.h"
+#include "nanopb/pb_encode.h"
+#include "grpc_data.pb.h"
+
 #include "collectd.h"
 #include "common.h"
 #include "plugin.h"
@@ -35,12 +39,14 @@ typedef struct grpc_callback {
   grpc_channel *channel;
   gpr_mu mutex;  /* Locks cq and *_counter, for concurrent writes */
   grpc_completion_queue *cq;
-  int write_counter;
-  int write_accepted_counter;
+  size_t write_counter;
+  size_t write_accepted_counter;
+  double deadline;
 } grpc_callback;
 
-static void destroy_cb(grpc_callback *cb)
+static void destroy_cb(void *arg)
 {
+  grpc_callback *cb = (grpc_callback *)arg;
   free(cb->host);
   if (cb->cred) grpc_credentials_release(cb->cred);
   if (cb->channel) grpc_channel_destroy(cb->channel);
@@ -56,6 +62,26 @@ typedef struct data_set_and_value_list_s {
   const value_list_t* vl;
 } data_set_and_value_list_t;
 
+static bool encode_fixed_string(
+    pb_ostream_t *stream, const pb_field_t *field, void * const *arg) {
+  const char *string = *(char * const*)arg;
+  if (!pb_encode_tag_for_field(stream, field))
+    return false;
+  if (!pb_encode_string(stream, (uint8_t *)string, strlen(string)))
+    return false;
+
+  return true;
+}
+
+/* Returns a callback that will encode string. Does not take ownership of
+ * string, which must live until after the callback is called. */
+static pb_callback_t make_string(const char *string) {
+  pb_callback_t ret;
+  ret.funcs.encode = encode_fixed_string;
+  ret.arg = (void*)string;
+  return ret;
+}
+
 static _Bool encode_int_values(
     pb_ostream_t *stream, const pb_field_t *field, void * const *arg) {
   const data_set_and_value_list_t *ds_and_vl =
@@ -63,8 +89,9 @@ static _Bool encode_int_values(
   const data_set_t *ds = ds_and_vl->ds;
   const value_list_t *vl = ds_and_vl->vl;
   google_internal_cloudlatencytest_v2_IntValue int_value;
+  size_t i;
 
-  for (size_t i = 0; i < ds->ds_num; i++) {
+  for (i = 0; i < ds->ds_num; i++) {
     int64_t value;
     switch (ds->ds[i].type) {  /* continue to skip this value */
       case DS_TYPE_COUNTER:
@@ -80,7 +107,7 @@ static _Bool encode_int_values(
         continue;
       default:
         ERROR("Data set %s source %s: unknown type %d",
-              ds.type, ds->ds[i].name, ds->ds[i].type);
+              ds->type, ds->ds[i].name, ds->ds[i].type);
         continue;
     }
 
@@ -92,7 +119,7 @@ static _Bool encode_int_values(
       if (!pb_encode_submessage(
               stream,
               google_internal_cloudlatencytest_v2_IntValue_fields,
-              &double_value))
+              &int_value))
         return false;
   }
   return true;
@@ -105,8 +132,9 @@ static bool encode_double_values(
   const data_set_t *ds = ds_and_vl->ds;
   const value_list_t *vl = ds_and_vl->vl;
   google_internal_cloudlatencytest_v2_DoubleValue double_value;
+  size_t i;
 
-  for (size_t i = 0; i < ds->ds_num; i++) {
+  for (i = 0; i < ds->ds_num; i++) {
     if (ds->ds[i].type == DS_TYPE_GAUGE) {
       double_value.label = make_string(ds->ds[i].name);
       double_value.has_value = true;
@@ -143,9 +171,8 @@ bool make_and_encode_string_value(
 
 bool encode_string_values(
     pb_ostream_t *stream, const pb_field_t *field, void * const *arg) {
-    const data_set_and_value_list_t *ds_and_vl =
+  const data_set_and_value_list_t *ds_and_vl =
       *(data_set_and_value_list_t * const *)arg;
-  const data_set_t *ds = ds_and_vl->ds;
   const value_list_t *vl = ds_and_vl->vl;
 
   if (!make_and_encode_string_value(stream, field, "type", vl->type))
@@ -163,20 +190,20 @@ bool encode_string_values(
 
 /* Encodes vl as a Stats protobuf to stream. */
 static bool encode_value_list(
-    pb_ostream_t *stream, const data_set_and_value_list_t ds_and_vl) {
+    pb_ostream_t *stream, const data_set_and_value_list_t* ds_and_vl) {
   google_internal_cloudlatencytest_v2_Stats stats;
 
   /* nanopb needs to encode every repeated field in a single call. This
    * means that we iterate multiple times over the value_list_t, once for
    * every reported type.
    */
-  stats.time = CDTIME_T_TO_DOUBLE(ds_and_vl.vl->time);
+  stats.time = CDTIME_T_TO_DOUBLE(ds_and_vl->vl->time);
   stats.int_values.funcs.encode = encode_int_values;
-  stats.int_values.arg = &ds_and_vl;
-  stats.double_values.func.encode = encode_double_values;
-  stats.double_values.arg = &ds_and_vl;
-  stats.string_values.func.encode = encode_string_values;
-  stats.string_values.arg = &ds_and_vl;
+  stats.int_values.arg = (void*)ds_and_vl;
+  stats.double_values.funcs.encode = encode_double_values;
+  stats.double_values.arg = (void*)ds_and_vl;
+  stats.string_values.funcs.encode = encode_string_values;
+  stats.string_values.arg = (void*)ds_and_vl;
   /* If reporting AggregatedStats, will need to pb_encode_tag_for_field */
   if (!pb_encode(
           stream, google_internal_cloudlatencytest_v2_Stats_fields, &stats))
@@ -213,6 +240,63 @@ static bool grpc_pb_ostream_callback(
   return 1;
 }
 
+/* Returns a deadline secs into the future */
+static gpr_timespec get_deadline(double secs)
+{
+  const time_t now = time(NULL);
+  gpr_timespec ret = {0};
+  ret.tv_sec = now + secs;
+  ret.tv_nsec = (secs - (time_t)secs) * 1e9;
+  return ret;
+}
+
+/* Empties cq.  If do_sleep, loops to wait until all writes were accepted or
+ * cb->deadline passes; otherwise, loops until either all writes were
+ * accepted or cq is empty.  Returns a true value if all writes were
+ * accepted.  Must call with cb->mutex held. */
+static int process_cq(grpc_callback *cb, int do_sleep) {
+  grpc_event *ev;
+  gpr_timespec sleep_until = get_deadline(do_sleep ? cb->deadline : 0);
+
+  while (cb->write_accepted_counter < cb->write_counter) {
+    ev = grpc_completion_queue_next(cb->cq, sleep_until);
+    if (!ev) {
+      if (do_sleep)
+        WARNING("write_grpc process_cq: "
+                "Emptied queue for %s, %zu/%zu writes accepted",
+                cb->host, cb->write_accepted_counter, cb->write_counter);
+      return 0;
+    }
+    switch (ev->type) {
+      case GRPC_WRITE_ACCEPTED:
+        DEBUG("write_grpc process_cb: %s: Write %zu/%zu accepted",
+              cb->host, cb->write_accepted_counter, cb->write_counter);
+        cb->write_accepted_counter++;
+        break;
+      case GRPC_CLIENT_METADATA_READ:
+        DEBUG("write_grpc process_cb: %s: Metadata read", cb->host);
+        break;
+      case GRPC_READ:
+        if (!ev->data.read)
+          DEBUG("write_grpc process_cb: %s: NULL read", cb->host);
+        /* TODO(arielshaqed): Handle return code (actual payload is empty). */
+        break;
+      case GRPC_FINISHED:
+        DEBUG("write_grpc process_cb: %s: Finished", cb->host);
+        break;
+      case GRPC_FINISH_ACCEPTED:
+        DEBUG("write_grpc process_cb: %s: Finish accepted", cb->host);
+        break;
+      default:
+        WARNING("write_grpc process_cq: %s: Unexpected event type %d",
+                cb->host, ev->type);
+        break;
+    }
+  }
+
+  return 1;
+}
+
 /* TODO(arielshaqed): Aggregate vl's by putting this on a separate
  * thread, write callback just loads the thread? Or use streaming
  * gRPC? */
@@ -225,6 +309,8 @@ static int write_data(const data_set_t *ds, const value_list_t *vl,
   grpc_callback *cb;
   grpc_call *call;
   gpr_slice slice;
+  gpr_slice slice_out;
+  grpc_byte_buffer* byte_buffer = NULL;
   grpc_call_error grpc_rc;
   int rc = 0;
 
@@ -245,11 +331,11 @@ static int write_data(const data_set_t *ds, const value_list_t *vl,
 
   /* Message can be written without gRPC blocking */
   slice = gpr_slice_malloc(4096);  /* Long enough for reasonable Stats */
-  stream_state.slice = slice;
-  stream_state.next = GPR_SLICE_START_PTR(stream_state.slice);
+  stream_state.slice = &slice;
+  stream_state.next = GPR_SLICE_START_PTR(*stream_state.slice);
   stream.callback = grpc_pb_ostream_callback;
   stream.state = &stream_state;
-  stream.max_size = GPR_SLICE_LENGTH(stream_state.slice);
+  stream.max_size = GPR_SLICE_LENGTH(*stream_state.slice);
   stream.bytes_written = 0;
   stream.errmsg = NULL;
 
@@ -261,30 +347,30 @@ static int write_data(const data_set_t *ds, const value_list_t *vl,
 
   slice_out = gpr_slice_sub(slice, 0, stream.bytes_written);
   byte_buffer = grpc_byte_buffer_create(&slice_out, 1);
-  if ((rc = grpc_call_start_write(call, byte_buffer, (void*)16, 0)) !=
+
+  call = grpc_channel_create_call(
+      cb->channel,
+      /* TODO(arielshaqed): Configure this */
+      "/google.internal.cloudlatencytest.v2.StatReporterService/UpdateAggregatedStats",
+      cb->host,
+      get_deadline(cb->deadline));
+
+  if ((grpc_rc = grpc_call_start_write(call, byte_buffer, (void*)16, 0)) !=
       GRPC_CALL_OK) {
     ERROR("write_grpc grpc_call_start_write: %d", rc);
     rc = grpc_rc;
     goto exit;
   }
 
+  process_cq(cb, 0 /* don't sleep */);
+
 exit:
   gpr_slice_unref(slice);
   gpr_slice_unref(slice_out);
-  grpc_byte_buffer_destroy(byte_buffer);
+  if (byte_buffer) grpc_byte_buffer_destroy(byte_buffer);
   gpr_mu_unlock(&cb->mutex);
 
   return rc;
-}
-
-/* Returns a deadline secs into the future */
-static gpr_timespec get_deadline(double secs)
-{
-  const time_t now = time(NULL);
-  gpr_timespec ret = {0};
-  ret.tv_sec = now + secs;
-  ret.tv_nsec = (secs - (time_t)secs) * 1e9;
-  return ret;
 }
 
 /* Returns cred for authenticating the client.
@@ -385,7 +471,8 @@ static grpc_credentials *get_credentials(
 static int load_config(oconfig_item_t *ci)
 {
   static int grpc_initialized = 0;
-  grpc_callback *cb;
+  static const grpc_channel_args no_args = {0, NULL};
+  grpc_callback *cb = NULL;
   user_data_t user_data;
   _Bool use_instance_credentials = 0;
   char *service_account_json_filename = NULL;
@@ -443,6 +530,12 @@ static int load_config(oconfig_item_t *ci)
         goto exit;
       }
     }
+    else if (STR_EQ(child->key, "Deadline")) {
+      if (cf_util_get_double(child, &cb->deadline)) {
+        ERROR("Bad Deadline value");
+        goto exit;
+      }
+    }
 
 #undef  STR_EQ
   }
@@ -470,6 +563,8 @@ static int load_config(oconfig_item_t *ci)
   if (!cb->channel)
     /* Error already logged */
     goto exit;
+
+  cb->cq = grpc_completion_queue_create();
 
   /* Success! */
   rc = 0;

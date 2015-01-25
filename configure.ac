@@ -59,6 +59,9 @@ then
 fi
 AM_CONDITIONAL(HAVE_PROTOC_C, test "x$have_protoc_c" = "xyes")
 
+AC_CHECK_PROG([have_protoc], [protoc], [yes], [no])
+AM_CONDITIONAL(HAVE_PROTOC, test "x$have_protoc" = "xyes")
+
 AC_MSG_CHECKING([for kernel type ($host_os)])
 case $host_os in
 	*linux*)

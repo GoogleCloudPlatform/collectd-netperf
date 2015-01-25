@@ -1153,10 +1153,13 @@ endif
 
 if BUILD_PLUGIN_WRITE_GRPC
 pkglib_LTLIBRARIES += write_grpc.la
-write_grpc_la_SOURCES = write_grpc.c
+write_grpc_la_SOURCES = write_grpc.c \
+        nanopb/pb_common.c nanopb/pb_encode.c nanopb/pb_decode.c
+write_grpc_la_CPPFLAGS = $(AM_CPPFLAGS) -Inanopb/
 write_grpc_la_CFLAGS = $(AM_CFLAGS) $(BUILD_WITH_GRPC_CFLAGS)
 write_grpc_la_LIBADD = $(BUILD_WITH_GRPC_LIBS)
 write_grpc_la_LDFLAGS = $(PLUGIN_LDFLAGS)
+nodist_write_grpc_la_SOURCE = grpc_data.pb.c grpc_data.pb.h
 endif
 
 if BUILD_PLUGIN_WRITE_HTTP
@@ -1318,6 +1321,28 @@ BUILT_SOURCES += riemann.pb-c.c riemann.pb-c.h
 
 riemann.pb-c.c riemann.pb-c.h: riemann.proto
 	protoc-c -I$(srcdir) --c_out . $(srcdir)/riemann.proto
+endif
+
+# Protocol buffer for the "write_grpc" plugin, compiled with nanopb.
+EXTRA_DIST += grpc_data.proto updater.proto
+if HAVE_PROTOC_C
+CLEANFILES += grpc_data.pb.c grpc_data.pb.h
+
+BUILT_SOURCES += grpc_data.pb.c grpc_data.pb.h
+
+# TODO(arielshaqed): Check Python?
+NANOPB_DIR=$(srcdir)/nanopb/generator
+NANOPB_ARGS=--plugin protoc-gen-nanopb=$(NANOPB_DIR)/protoc-gen-nanopb \
+		--nanopb_out .
+
+nanopb/generator/proto/nanopb_pb2.py nanopb/generator/proto/plugin_pb2.py: 
+	$(MAKE) -C nanopb/generator/proto
+
+grpc_data.pb.c grpc_data.pb.h: grpc_data.proto \
+		nanopb/generator/protoc-gen-nanopb \
+		nanopb/generator/proto/nanopb_pb2.py \
+		nanopb/generator/proto/plugin_pb2.py
+	protoc $(NANOPB_ARGS) $(srcdir)/grpc_data.proto
 endif
 
 install-exec-hook:

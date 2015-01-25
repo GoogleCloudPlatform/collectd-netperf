@@ -1,0 +1,68 @@
+// TODO(arielshaqed): LICENSE!
+
+syntax = "proto2";
+
+package google.internal.cloudlatencytest.v2;
+
+option java_package = "com.google.internal.cloudlatencytest.v2";
+
+
+// A simple message representing an integer measurement.
+message IntValue {
+  // The (unique) label of the measurement.
+  optional string label = 1;
+
+  // The int value
+  optional int64 value = 2;
+}
+
+// A simple message representing a double measurements.
+message DoubleValue {
+  // The (unique) label of the measurement.
+  optional string label = 1;
+
+  // The float value.
+  optional float value = 2;
+}
+
+// A simple message representing a string measurements.
+message StringValue {
+  // The (unique) label of the measurement.
+  optional string label = 1;
+
+  // The value.
+  optional string value = 2;
+}
+
+// Collection of the samples, string data sampled at a given time.
+message Stats {
+  // Sample time.
+  optional double time = 1;
+
+  // The list of the int/float measurements.
+  repeated IntValue int_values = 2;
+
+  // The list of the int/float measurements.
+  repeated DoubleValue double_values = 3;
+
+  // The list of annotations.
+  repeated StringValue string_values = 4;
+}
+
+// Aggregated report of multiple Stats
+message AggregatedStats {
+  // A collection of reported stats.
+  repeated Stats stats = 1;
+}
+
+// Reply for the stats reporting rpc.
+message StatsReply {
+  // Debug data for testing purpuses.
+  optional string test_value = 99;
+}
+
+// Reply for the aggregated stats reporting rpc.
+message AggregatedStatsReply {
+  // Debug data for testing purpuses.
+  optional string test_value = 99;
+}
