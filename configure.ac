@@ -4605,11 +4605,8 @@ then
 	CPPFLAGS="$CPPFLAGS $with_grpc_cppflags"
 	LDFLAGS="$LDFLAGS $with_grpc_ldflags"
 
-	# TODO(arielshaqed): Better search / docs for finding the other libs?
-
-	# Seems like a problem with needing to link dynamically!
 	AC_CHECK_LIB(grpc, grpc_channel_create_call, [with_grpc="yes"], [with_grpc="no (Symbol 'grpc_channel_create_call' not found)"], -lgpr -levent -levent_pthreads -lpthread -ldl)
-	AC_CHECK_LIB(grpc, grpc_service_account_credentials_create, [with_grpc="yes"], [with_grpc="no (No crypto: Symbol 'grpc_service_account_credentials_create' not found)"], -lgpr -levent -levent_pthreads -lpthread -ldl)
+	AC_CHECK_LIB(grpc, grpc_service_account_credentials_create, [with_grpc="yes"], [with_grpc="no (Crypto symbol 'grpc_service_account_credentials_create' not found)"], -lgpr -levent -levent_pthreads -lpthread -ldl)
 
 	CPPFLAGS="$SAVE_CPPFLAGS"
 	LDFLAGS="$SAVE_LDFLAGS"
@@ -4625,6 +4622,7 @@ then
 	AC_DEFINE(HAVE_GRPC, 1, [Define if grpc is present and usable.])
 fi
 AM_CONDITIONAL(BUILD_WITH_GRPC, test "x$with_grpc" = "xyes")
+AC_SUBST(BUILD_WITH_GRPC)
 # }}}
 
 # --with-mic {{{
@@ -5635,6 +5633,7 @@ AC_PLUGIN([vmem],        [$plugin_vmem],       [Virtual memory statistics])
 AC_PLUGIN([vserver],     [$plugin_vserver],    [Linux VServer statistics])
 AC_PLUGIN([wireless],    [$plugin_wireless],   [Wireless statistics])
 AC_PLUGIN([write_graphite], [yes],             [Graphite / Carbon output plugin])
+AC_PLUGIN([write_grpc],  [$with_grpc],         [gRPC output plugin])
 AC_PLUGIN([write_http],  [$with_libcurl],      [HTTP output plugin])
 AC_PLUGIN([write_kafka],  [$with_librdkafka],  [Kafka output plugin])
 AC_PLUGIN([write_mongodb], [$with_libmongoc],  [MongoDB output plugin])
@@ -6005,6 +6004,7 @@ Configuration:
     vserver . . . . . . . $enable_vserver
     wireless  . . . . . . $enable_wireless
     write_graphite  . . . $enable_write_graphite
+    write_grpc  . . . . . $enable_write_grpc
     write_http  . . . . . $enable_write_http
     write_kafka . . . . . $enable_write_kafka
     write_mongodb . . . . $enable_write_mongodb

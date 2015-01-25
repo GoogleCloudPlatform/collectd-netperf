@@ -1151,6 +1151,14 @@ write_graphite_la_SOURCES = write_graphite.c \
 write_graphite_la_LDFLAGS = $(PLUGIN_LDFLAGS)
 endif
 
+if BUILD_PLUGIN_WRITE_GRPC
+pkglib_LTLIBRARIES += write_grpc.la
+write_grpc_la_SOURCES = write_grpc.c
+write_grpc_la_CFLAGS = $(AM_CFLAGS) $(BUILD_WITH_GRPC_CFLAGS)
+write_grpc_la_LIBADD = $(BUILD_WITH_GRPC_LIBS)
+write_grpc_la_LDFLAGS = $(PLUGIN_LDFLAGS)
+endif
+
 if BUILD_PLUGIN_WRITE_HTTP
 pkglib_LTLIBRARIES += write_http.la
 write_http_la_SOURCES = write_http.c \
