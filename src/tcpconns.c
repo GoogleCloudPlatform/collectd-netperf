@@ -494,6 +494,8 @@ static int conn_handle_ports (uint16_t port_local, uint16_t port_remote, uint8_t
 } /* int conn_handle_ports */
 
 #if KERNEL_LINUX
+
+#if HAVE_STRUCT_LINUX_INET_DIAG_REQ
 /* Batched reporting of value_list_t  */
 typedef struct value_list_batch_s {
     size_t size;
@@ -561,7 +563,6 @@ static void value_list_batch_release(value_list_batch_t *batch)
   value_list_batch_maybe_flush(batch);
 }
 
-#if HAVE_STRUCT_LINUX_INET_DIAG_REQ
 /* Return 1 if tcpi should be reported */
 static int filter_tcpi(const struct tcp_info* tcpi)
 {
@@ -764,9 +765,10 @@ static int conn_read_netlink (void)
   close(fd);
   value_list_batch_free(batch);
   return (0);
+#else
+  return (1);
+#endif  /* HAVE_STRUCT_LINUX_INET_DIAG_REQ */
 } /* int conn_read_netlink */
-
-#endif  /* KERNEL_LINUX */
 
 static int conn_handle_line (char *buffer)
 {
