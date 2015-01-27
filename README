@@ -433,6 +433,9 @@ Features
     - write_kafka
       Sends data to Apache Kafka, a distributed queue.
 
+    - write_log
+      Writes data to the log
+
     - write_mongodb
       Sends data to MongoDB, a NoSQL database.
 
@@ -885,7 +888,7 @@ script shipped with releases.
 To generate the `configure` script, you'll need the following dependencies:
 
 - autoconf
-- automke
+- automake
 - flex
 - bison
 - libtool
