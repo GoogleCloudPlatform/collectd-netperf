@@ -162,6 +162,7 @@
 %define with_wireless 0%{!?_without_wireless:1}
 %define with_write_graphite 0%{!?_without_write_graphite:1}
 %define with_write_http 0%{!?_without_write_http:1}
+%define with_write_log 0%{!?_without_write_log:1}
 %define with_write_redis 0%{!?_without_write_redis:0%{?_has_hiredis}}
 %define with_write_riemann 0%{!?_without_write_riemann:1}
 %define with_write_tsdb 0%{!?_without_write_tsdb:1}
@@ -216,9 +217,16 @@ BuildRoot:	%{_tmppath}/%{name}-%{version}-root
 BuildRequires:	libgcrypt-devel, kernel-headers, libtool-ltdl-devel
 Vendor:		collectd development team <collectd@verplant.org>
 
+%if 0%{?el7:1}
+Requires(pre):		initscripts
+Requires(post):		systemd
+Requires(preun):	systemd
+Requires(postun):	systemd
+%else
 Requires(post):		chkconfig
 Requires(preun):	chkconfig, initscripts
 Requires(postun):	initscripts
+%endif
 
 %description
 collectd is a small daemon which collects system information periodically and
@@ -554,11 +562,11 @@ Summary:	Perl plugin for collectd
 Group:		System Environment/Daemons
 Requires:	%{name}%{?_isa} = %{version}-%{release}
 Requires:	perl(:MODULE_COMPAT_%(eval "`%{__perl} -V:version`"; echo $version))
-%if 0%{?rhel} >= 6
+	%if 0%{?rhel} >= 6
 BuildRequires:	perl-ExtUtils-Embed
-%else
+	%else
 BuildRequires:	perl
-%endif
+	%endif
 %description perl
 The Perl plugin embeds a Perl interpreter into collectd and exposes the
 application programming interface (API) to Perl-scripts.
@@ -602,11 +610,11 @@ database.
 Summary:	Python plugin for collectd
 Group:		System Environment/Daemons
 Requires:	%{name}%{?_isa} = %{version}-%{release}
-%if 0%{?rhel} >= 6
+	%if 0%{?rhel} >= 6
 BuildRequires: python-devel
-%else
+	%else
 BuildRequires: python26-devel
-%endif
+	%endif
 %description python
 The Python plugin embeds a Python interpreter into collectd and exposes the
 application programming interface (API) to Python-scripts.
@@ -789,6 +797,13 @@ Requires:	libcollectdclient%{?_isa} = %{version}-%{release}
 %description -n libcollectdclient-devel
 Development files for libcollectdclient
 
+%package -n collectd-utils
+Summary:	Collectd utilities
+Group:		System Environment/Daemons
+Requires:	libcollectdclient%{?_isa} = %{version}-%{release}
+Requires:	collectd%{?_isa} = %{version}-%{release}
+%description -n collectd-utils
+Collectd utilities
 
 %prep
 %setup -q
@@ -1257,11 +1272,11 @@ Development files for libcollectdclient
 %endif
 
 %if %{with_python}
-%if 0%{?rhel} >= 6
+	%if 0%{?rhel} >= 6
 %define _with_python --enable-python
-%else
+	%else
 %define _with_python --enable-python --with-python=%{_bindir}/python2.6
-%endif
+	%endif
 %else
 %define _with_python --disable-python
 %endif
@@ -1464,6 +1479,12 @@ Development files for libcollectdclient
 %define _with_write_kafka --disable-write_kafka
 %endif
 
+%if %{with_write_log}
+%define _with_write_log --enable-write_log
+%else
+%define _with_write_log --disable-write_log
+%endif
+
 %if %{with_write_mongodb}
 %define _with_write_mongodb --enable-write_mongodb
 %else
@@ -1637,6 +1658,7 @@ Development files for libcollectdclient
 	%{?_with_wireless}\
 	%{?_with_write_graphite} \
 	%{?_with_write_http} \
+	%{?_with_write_log} \
 	%{?_with_write_riemann} \
 	%{?_with_write_tsdb}
 
@@ -1647,7 +1669,11 @@ Development files for libcollectdclient
 %install
 rm -rf %{buildroot}
 %{__make} install DESTDIR=%{buildroot}
-%{__install} -Dp -m 0755 contrib/redhat/init.d-collectd %{buildroot}%{_initrddir}/collectd
+%if 0%{?el7:1}
+%{__install} -Dp -m0644 contrib/systemd.collectd.service %{buildroot}%{_unitdir}/collectd.service
+%else
+%{__install} -Dp -m0755 contrib/redhat/init.d-collectd %{buildroot}%{_initrddir}/collectd
+%endif
 %{__install} -Dp -m0644 src/collectd.conf %{buildroot}%{_sysconfdir}/collectd.conf
 %{__install} -d %{buildroot}%{_sharedstatedir}/collectd/
 %{__install} -d %{buildroot}%{_sysconfdir}/collectd.d/
@@ -1704,19 +1730,44 @@ rm -f %{buildroot}%{_mandir}/man5/collectd-snmp.5*
 %clean
 rm -rf %{buildroot}
 
+%pre
+%if 0%{?el7:1}
+# stop sysv-based instance before upgrading to systemd
+if [ $1 -eq 2 ] && [ -f /var/lock/subsys/collectd ]; then
+	SYSTEMCTL_SKIP_REDIRECT=1 %{_initddir}/collectd stop >/dev/null 2>&1 || :
+fi
+%endif
+
 %post
-/sbin/chkconfig --add collectd
+%if 0%{?el7:1}
+if [ $1 -eq 2 ]; then
+	/usr/bin/systemctl daemon-reload >/dev/null 2>&1 || :
+fi
+%systemd_post collectd.service
+%else
+/sbin/chkconfig --add collectd || :
+%endif
 
 %preun
+%if 0%{?el7:1}
+%systemd_preun collectd.service
+%else
+# stop collectd only when uninstalling
 if [ $1 -eq 0 ]; then
-	/sbin/service collectd stop &>/dev/null
-	/sbin/chkconfig --del collectd
+	/sbin/service collectd stop >/dev/null 2>&1 || :
+	/sbin/chkconfig --del collectd || :
 fi
+%endif
 
 %postun
-if [ $1 -ge 1 ]; then
-	/sbin/service collectd condrestart &>/dev/null || :
+%if 0%{?el7:1}
+%systemd_postun_with_restart collectd.service
+%else
+# restart collectd only when upgrading
+if [ $1 -eq 1 ]; then
+	/sbin/service collectd condrestart >/dev/null 2>&1 || :
 fi
+%endif
 
 %post -n libcollectdclient -p /sbin/ldconfig
 %postun -n libcollectdclient -p /sbin/ldconfig
@@ -1725,19 +1776,17 @@ fi
 %files
 %doc AUTHORS COPYING ChangeLog README
 %config(noreplace) %{_sysconfdir}/collectd.conf
+%if 0%{?el7:1}
+%{_unitdir}/collectd.service
+%else
 %{_initrddir}/collectd
+%endif
 %{_sbindir}/collectd
-%{_bindir}/collectd-nagios
-%{_bindir}/collectd-tg
-%{_bindir}/collectdctl
 %{_sbindir}/collectdmon
 %{_datadir}/collectd/types.db
 %{_sharedstatedir}/collectd
-%{_mandir}/man1/collectd-nagios.1*
 %{_mandir}/man1/collectd.1*
-%{_mandir}/man1/collectdctl.1*
 %{_mandir}/man1/collectdmon.1*
-%{_mandir}/man1/collectd-tg.1*
 %{_mandir}/man5/collectd-email.5*
 %{_mandir}/man5/collectd-exec.5*
 %{_mandir}/man5/collectd-threshold.5*
@@ -1925,6 +1974,9 @@ fi
 %if %{with_write_graphite}
 %{_libdir}/%{name}/write_graphite.so
 %endif
+%if %{with_write_log}
+%{_libdir}/%{name}/write_log.so
+%endif
 %if %{with_write_tsdb}
 %{_libdir}/%{name}/write_tsdb.so
 %endif
@@ -1945,6 +1997,14 @@ fi
 %files -n libcollectdclient
 %{_libdir}/libcollectdclient.so
 %{_libdir}/libcollectdclient.so.*
+
+%files -n collectd-utils
+%{_bindir}/collectd-nagios
+%{_bindir}/collectd-tg
+%{_bindir}/collectdctl
+%{_mandir}/man1/collectdctl.1*
+%{_mandir}/man1/collectd-nagios.1*
+%{_mandir}/man1/collectd-tg.1*
 
 %if %{with_amqp}
 %files amqp
@@ -2211,10 +2271,12 @@ fi
 %changelog
 # * TODO 5.5.0-1
 # - New upstream version
-# - New plugins enabled by default: drbd, log_logstash, write_tsdb, smart, openldap, redis, write_redis, zookeeper
+# - New plugins enabled by default: drbd, log_logstash, write_tsdb, smart, openldap, redis, write_redis, zookeeper, write_log
 # - New plugins disabled by default: barometer, write_kafka
 # - Enable zfs_arc, now supported on Linux
-# - Install disk plugin in an dedicated package, as it depends on libudev
+# - Install disk plugin in a dedicated package, as it depends on libudev
+# - use systemd on EL7, sysvinit on EL6 & EL5
+# - Install collectdctl, collectd-tg and collectd-nagios in collectd-utils.rpm
 
 * Mon Aug 19 2013 Marc Fournier <marc.fournier@camptocamp.com> 5.4.0-1
 - New upstream version
