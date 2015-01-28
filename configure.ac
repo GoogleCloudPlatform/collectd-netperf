@@ -4614,7 +4614,7 @@ then
 	CPPFLAGS="$SAVE_CPPFLAGS"
 	LDFLAGS="$SAVE_LDFLAGS"
 fi
-if test "with_grpc" = "xyes"
+if test "x$with_grpc" = "xyes"
 then
 	BUILD_WITH_GRPC_CPPFLAGS="$with_grpc_cppflags"
 	BUILD_WITH_GRPC_LDFLAGS="$with_grpc_ldflags"

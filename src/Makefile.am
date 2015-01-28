@@ -1155,11 +1155,11 @@ if BUILD_PLUGIN_WRITE_GRPC
 pkglib_LTLIBRARIES += write_grpc.la
 write_grpc_la_SOURCES = write_grpc.c \
         nanopb/pb_common.c nanopb/pb_encode.c nanopb/pb_decode.c
-write_grpc_la_CPPFLAGS = $(AM_CPPFLAGS) -Inanopb/
+write_grpc_la_CPPFLAGS = $(AM_CPPFLAGS) $(BUILD_GRPC_CPPFLAGS) -Inanopb/
 write_grpc_la_CFLAGS = $(AM_CFLAGS) $(BUILD_WITH_GRPC_CFLAGS)
 write_grpc_la_LIBADD = $(BUILD_WITH_GRPC_LIBS)
 write_grpc_la_LDFLAGS = $(PLUGIN_LDFLAGS)
-nodist_write_grpc_la_SOURCE = grpc_data.pb.c grpc_data.pb.h
+nodist_write_grpc_la_SOURCES = grpc_data.pb.c grpc_data.pb.h
 endif
 
 if BUILD_PLUGIN_WRITE_HTTP

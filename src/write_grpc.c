@@ -256,9 +256,9 @@ static gpr_timespec get_deadline(double secs)
  * accepted.  Must call with cb->mutex held. */
 static int process_cq(grpc_callback *cb, int do_sleep) {
   grpc_event *ev;
-  gpr_timespec sleep_until = get_deadline(do_sleep ? cb->deadline : 0);
 
   while (cb->write_accepted_counter < cb->write_counter) {
+    gpr_timespec sleep_until = get_deadline(do_sleep ? cb->deadline : 0);
     ev = grpc_completion_queue_next(cb->cq, sleep_until);
     if (!ev) {
       if (do_sleep)
@@ -494,6 +494,7 @@ static int load_config(oconfig_item_t *ci)
   cb->cq = NULL;
   cb->write_counter = 0;
   cb->write_accepted_counter = 0;
+  cb->deadline = 20.0;
 
   for (i = 0; i < ci->children_num; i++) {
     oconfig_item_t *child = &ci->children[i];
