@@ -54,6 +54,7 @@ src/liboconfig/scanner.c
 
 # protobuf stuff:
 src/*.pb-c.[ch]
+src/*.pb.[ch]
 
 # make dist stuff:
 /collectd-*.tar.gz
