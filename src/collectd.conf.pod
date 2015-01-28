@@ -6815,6 +6815,70 @@ more than one DS.
 
 =back
 
+=head2 Plugin C<write_grpc>
+
+The C<write_grpc> plugin writes data to a suitable backend using the gRPC
+protocol and a generic protocol buffer.  It allows high performance
+reporting, and supports client authentication using either service accounts
+or Google Compute Engine (GCE) per-instance default tokens.
+
+=over 4
+
+=item If running on a GCE instance with the appropriate default scope
+      (https://www.googleapis.com/auth/monitoring.readonly), set
+      C<UseInstanceCredentials>.
+
+=item Otherwise, acquire service account credentials in a JSON file, and set
+      C<ServiceAccountJsonFile> to the pathname of that file.
+
+=back.
+
+Synopsis:
+
+ <Plugin write_grpc>
+   Host "cloudlatencytest.googleapis.com"
+   UseInstanceCredentials true
+   # OR: ServiceAccountJsonFile "/path/to/service-account.json"
+   RootPEMFile "/usr/share/ca-certificates/google/RootsForGoogleSSLCAs.crt"
+             # (For connecting to Google from Ubuntu machines)
+ </Plugin>
+
+=over 4
+
+=item B<Host> I<fqdn>
+
+Connect to the server at I<fqdn>.  Also used in server certificate
+validation.
+
+=item B<UseInstanceCredentials> B<true>|B<false>
+
+If true and running on a Google Compute Engine instance, acquire client
+authentication tokens from the metadata server.  The instance must have been
+created with the required B<Scopes> in its default scope.
+
+=item B<ServiceAccountJsonFile> I<filename>
+
+Use JSON-format service account credentials stored in I<filename> to acquire
+client authentication tokens.
+
+=item B<Scopes> I<urn>
+
+Request authentication tokens for this I<urn>.  This must match the required
+scope for contacting the B<Host> server.  Default
+C<https://www.googleapis.com/auth/monitoring.readonly>.
+
+=item B<RootPEMFile> I<filename>
+
+Filename containing PEM of trusted root CAs.  Use a trusted source for this,
+e.g. your distribution or C<http://pki.google.com/roots.pem>.
+
+=item B<Deadline> I<seconds>
+
+Wait up to I<seconds> for gRPC operations to complete.  Default 20.
+
+=back
+
+
 =head2 Plugin C<write_tsdb>
 
 The C<write_tsdb> plugin writes data to I<OpenTSDB>, a scalable open-source
