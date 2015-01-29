@@ -30,9 +30,14 @@
 #define PLUGIN_NAME "WriteGRPC"
 #define MONITORING_SCOPES "https://www.googleapis.com/auth/monitoring.readonly"
 
+/* DEBUG LOGS ON! */
+#undef DEBUG
+#define DEBUG INFO
+
 /*
  * Configuration and workspace
  */
+#define MAX_REPORTS_PER_SEND    256
 typedef struct grpc_callback {
   char *host;
   grpc_credentials *cred;
@@ -42,16 +47,25 @@ typedef struct grpc_callback {
   size_t write_counter;
   size_t write_accepted_counter;
   double deadline;
+
+  /* Slices holding encoded Event messages. */
+  /* TODO(arielshaqed): Could just use a regular pre-allocated buffer (and
+   * flush when full). */
+  size_t next_slice;
+  gpr_slice slice[MAX_REPORTS_PER_SEND];
 } grpc_callback;
 
 static void destroy_cb(void *arg)
 {
   grpc_callback *cb = (grpc_callback *)arg;
+  size_t i;
   free(cb->host);
   if (cb->cred) grpc_credentials_release(cb->cred);
   if (cb->channel) grpc_channel_destroy(cb->channel);
   gpr_mu_destroy(&cb->mutex);
   if (cb->cq) grpc_completion_queue_destroy(cb->cq);
+  for (i = 0; i < cb->next_slice; i++)
+    gpr_slice_unref(cb->slice[i]);
   free(cb);
 }
 
@@ -204,11 +218,39 @@ static bool encode_value_list(
   stats.double_values.arg = (void*)ds_and_vl;
   stats.string_values.funcs.encode = encode_string_values;
   stats.string_values.arg = (void*)ds_and_vl;
-  /* If reporting AggregatedStats, will need to pb_encode_tag_for_field */
-  if (!pb_encode(
+
+  if (!pb_encode_delimited(
           stream, google_internal_cloudlatencytest_v2_Stats_fields, &stats))
     return false;
   return true;
+}
+
+/* Encodes all encoded Stats in cb */
+static bool encode_serialized_stats(
+    pb_ostream_t *stream, const pb_field_t *field, void * const *arg) {
+  const grpc_callback *cb = *(grpc_callback * const*)arg;
+  size_t i;
+
+  for (i = 0; i < cb->next_slice; i++) {
+    if (!pb_encode_tag_for_field(stream, field))
+      return false;
+    if (!pb_write(stream,
+                  GPR_SLICE_START_PTR(cb->slice[i]),
+                  GPR_SLICE_LENGTH(cb->slice[i])))
+      return false;
+  }
+  return true;
+}
+
+/* Encodes already-serialized Stats */
+static bool encode_from_callback(pb_ostream_t *stream, grpc_callback *cb) {
+  google_internal_cloudlatencytest_v2_AggregatedStats agg;
+
+  agg.stats.funcs.encode = encode_serialized_stats;
+  agg.stats.arg = cb;
+
+  return pb_encode(
+      stream, google_internal_cloudlatencytest_v2_AggregatedStats_fields, &agg);
 }
 
 /* ---------------- gRPC : nanopb interface ---------------- */
@@ -297,9 +339,155 @@ static int process_cq(grpc_callback *cb, int do_sleep) {
   return 1;
 }
 
-/* TODO(arielshaqed): Aggregate vl's by putting this on a separate
- * thread, write callback just loads the thread? Or use streaming
- * gRPC? */
+/* Returns sum of slice sizes */
+static size_t get_sum_slices(const gpr_slice *slice, size_t num) {
+  size_t i;
+  size_t ret = 0;
+  for (i = 0; i < num; i++)
+    ret += GPR_SLICE_LENGTH(slice[i]);
+  return ret;
+}
+
+/* Flushes all pending data in cb and waits for gRPC to accept the write.
+ * If write queue is full, waits even longer for gRPC to free up some space.
+ * Caller must hold cb->mutex.  Returns 0 on success, or an error code. */
+static int do_flush_nolock(grpc_callback *cb) {
+  pb_ostream_callback_state_t stream_state;
+  pb_ostream_t stream;
+  gpr_slice slice;
+  gpr_slice slice_out;
+  grpc_byte_buffer* byte_buffer = NULL;
+  grpc_call *call;
+  grpc_event *ev;
+  grpc_call_error grpc_rc;
+  size_t i;
+  int rc = 0;
+
+  if (cb->next_slice == 0)
+    return 0;
+
+  /* If preceding write has not yet been accepted, sleep for it now, to
+   * avoid queuing outbound writes. This applies backpressure on the
+   * collectd write queue, keeping relatively few messages in gRPC. */
+  while (cb->write_accepted_counter < cb->write_counter) {
+    DEBUG("Wait for message %zu for %s to be accepted",
+          cb->write_counter, cb->host);
+    process_cq(cb, 1 /* Wait on CQ */);
+  }
+
+  slice = gpr_slice_malloc(get_sum_slices(&cb->slice[0], cb->next_slice) + 512);
+  stream_state.slice = &slice;
+  stream_state.next = GPR_SLICE_START_PTR(*stream_state.slice);
+  stream.callback = grpc_pb_ostream_callback;
+  stream.state = &stream_state;
+  stream.max_size = GPR_SLICE_LENGTH(*stream_state.slice);
+  stream.bytes_written = 0;
+  stream.errmsg = NULL;
+
+  if (!encode_from_callback(&stream, cb)) {
+    ERROR("write_grpc do_flush_nolock: %s", PB_GET_ERROR(&stream));
+    rc = -1;
+    goto exit;
+  }
+
+  slice_out = gpr_slice_sub(slice, 0, stream.bytes_written);
+
+  do {
+    int fd;
+    if ((fd = open("/tmp/message", O_WRONLY | O_CREAT, 0666)) < 0) {
+      ERROR("open");
+      break;
+    }
+    if (write(fd, GPR_SLICE_START_PTR(slice_out), GPR_SLICE_LENGTH(slice_out)) <
+        GPR_SLICE_LENGTH(slice_out)) {
+      ERROR("short write");
+      break;
+    }
+  } while (0);
+  byte_buffer = grpc_byte_buffer_create(&slice_out, 1);
+
+  call = grpc_channel_create_call(
+      cb->channel,
+      /* TODO(arielshaqed): Configure this */
+      "/google.internal.cloudlatencytest.v2.StatReporterService/UpdateAggregatedStats",
+      cb->host,
+      get_deadline(cb->deadline));
+
+  if ((grpc_rc = grpc_call_start_invoke(
+          call, cb->cq, (void*)17, (void*)18, (void*)19, 0) != GRPC_CALL_OK)) {
+    ERROR("write_grpc grpc_call_start_invoke: failed %d\n", grpc_rc);
+    rc = grpc_rc;
+    goto exit;
+  }
+
+  /* TODO(ctiller): Should we pluck? */
+  ev = grpc_completion_queue_next(cb->cq, get_deadline(60));
+  if (!ev) {
+    ERROR("write_grpc grpc_completion_queue_next: no completion event\n");
+    rc = -1;
+    goto exit;
+  }
+
+  if (ev->data.invoke_accepted != GRPC_OP_OK) {
+    ERROR("write_grpc grpc_completion_queue_next: invoke_accepted %d\n",
+            ev->data.invoke_accepted);
+    rc = -2;
+    goto exit;
+  }
+  grpc_event_finish(ev);
+
+  if ((grpc_rc = grpc_call_start_write(call, byte_buffer, (void*)20, 0)) !=
+      GRPC_CALL_OK) {
+    ERROR("write_grpc call write start: %d\n", grpc_rc);
+    rc = grpc_rc;
+    goto exit;
+  }
+
+  /* Start reading -- but ignore whatever we read */
+  if ((grpc_rc = grpc_call_start_read(call, (void*)21)) != GRPC_CALL_OK) {
+    ERROR("grpc_call_read_start: %d\n", grpc_rc);
+    rc = grpc_rc;
+    goto exit;
+  }
+
+  process_cq(cb, 0 /* don't sleep */);
+
+exit:
+  gpr_slice_unref(slice);
+  gpr_slice_unref(slice_out);
+  if (byte_buffer) grpc_byte_buffer_destroy(byte_buffer);
+  for (i = 0; i < cb->next_slice; i++)
+    gpr_slice_unref(cb->slice[i]);
+  cb->next_slice = 0;
+
+  return rc;
+}
+
+static int flush_data(
+    cdtime_t timeout,
+    const char *identifier,
+    user_data_t *user_data)
+{
+  grpc_callback *cb = user_data->data;
+  int rc = 0;
+
+  /* Warn about BUG */
+  if (timeout > 0) {
+    WARNING("Ignoring timeout %f", CDTIME_T_TO_DOUBLE(timeout));
+    rc = 1;
+  }
+  if (identifier != NULL) {
+    WARNING("Ignoring identifier \"%s\"", identifier);
+    rc = 2;
+  }
+
+  gpr_mu_lock(&cb->mutex);
+  do_flush_nolock(cb);
+  gpr_mu_unlock(&cb->mutex);
+
+  return rc;
+}
+
 static int write_data(const data_set_t *ds, const value_list_t *vl,
                       user_data_t *user_data)
 {
@@ -307,11 +495,8 @@ static int write_data(const data_set_t *ds, const value_list_t *vl,
   pb_ostream_callback_state_t stream_state;
   pb_ostream_t stream;
   grpc_callback *cb;
-  grpc_call *call;
   gpr_slice slice;
   gpr_slice slice_out;
-  grpc_byte_buffer* byte_buffer = NULL;
-  grpc_call_error grpc_rc;
   int rc = 0;
 
   cb = user_data->data;
@@ -320,14 +505,6 @@ static int write_data(const data_set_t *ds, const value_list_t *vl,
   ds_and_vl.vl = vl;
 
   gpr_mu_lock(&cb->mutex);
-  /* If preceding write has not yet been accepted, sleep for it now:
-   * avoid queuing outbound writes. This applies backpressure on the
-   * collectd write queue, keeping relatively few messages in gRPC. */
-  if (cb->write_accepted_counter < cb->write_counter) {
-    DEBUG("Wait for message %d for %s to be accepted",
-          cb->write_counter, cb->host);
-    process_cq(cb, 1 /* Wait on CQ */);
-  }
 
   /* Message can be written without gRPC blocking */
   slice = gpr_slice_malloc(4096);  /* Long enough for reasonable Stats */
@@ -345,33 +522,27 @@ static int write_data(const data_set_t *ds, const value_list_t *vl,
     goto exit;
   }
 
+  /* TODO(arielshaqed): This keeps a ref to slice, leading to increased
+   * memory usage. May be better to have slices consecutive in memory (and
+   * not let gRPC alloc them).
+  */
   slice_out = gpr_slice_sub(slice, 0, stream.bytes_written);
-  byte_buffer = grpc_byte_buffer_create(&slice_out, 1);
 
-  call = grpc_channel_create_call(
-      cb->channel,
-      /* TODO(arielshaqed): Configure this */
-      "/google.internal.cloudlatencytest.v2.StatReporterService/UpdateAggregatedStats",
-      cb->host,
-      get_deadline(cb->deadline));
+  cb->slice[cb->next_slice++] = slice_out;
+  if (cb->next_slice >= sizeof(cb->slice)/sizeof(cb->slice[0]))
+    do_flush_nolock(cb);
 
-  if ((grpc_rc = grpc_call_start_write(call, byte_buffer, (void*)16, 0)) !=
-      GRPC_CALL_OK) {
-    ERROR("write_grpc grpc_call_start_write: %d", rc);
-    rc = grpc_rc;
-    goto exit;
-  }
-
-  process_cq(cb, 0 /* don't sleep */);
+  INFO("write_grpc write_data: %zu/%zu slices",
+       cb->next_slice, sizeof(cb->slice)/sizeof(cb->slice[0]));
 
 exit:
-  gpr_slice_unref(slice);
   gpr_slice_unref(slice_out);
-  if (byte_buffer) grpc_byte_buffer_destroy(byte_buffer);
   gpr_mu_unlock(&cb->mutex);
 
   return rc;
 }
+
+
 
 /* Returns cred for authenticating the client.
  *
@@ -495,6 +666,7 @@ static int load_config(oconfig_item_t *ci)
   cb->write_counter = 0;
   cb->write_accepted_counter = 0;
   cb->deadline = 20.0;
+  cb->next_slice = 0;
 
   for (i = 0; i < ci->children_num; i++) {
     oconfig_item_t *child = &ci->children[i];
@@ -573,7 +745,9 @@ static int load_config(oconfig_item_t *ci)
   user_data.data = cb;
   user_data.free_func = destroy_cb;
   plugin_register_write(PLUGIN_NAME, write_data, &user_data);
-  /* TODO(arielshaqed): flush */
+  user_data.free_func = NULL;
+  plugin_register_flush(PLUGIN_NAME, flush_data, &user_data);
+  /* TODO(arielshaqed): shutdown */
 
 exit:
   if (rc < 0 && cb)
