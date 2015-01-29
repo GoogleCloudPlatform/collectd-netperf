@@ -88,3 +88,9 @@ src/tests/mock/.deps/
 src/daemon/.deps/
 src/daemon/.dirstamp
 src/daemon/collectd
+
+# For unpacking new versions of nanopb
+src/nanopb/examples
+# nanopb dependencies
+src/nanopb/.deps
+src/nanopb/.dirstamp
