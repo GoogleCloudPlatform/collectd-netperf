@@ -1,3 +1,4 @@
+!Makefile
 *.gcda
 *.gcno
 *.gcov
