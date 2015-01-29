@@ -12,6 +12,7 @@
 #include "grpc/grpc_security.h"
 #include "grpc/support/alloc.h"
 #include "grpc/support/host_port.h"
+#include "grpc/support/log.h"
 #include "grpc/support/sync.h"
 
 #include "nanopb/pb.h"
@@ -251,6 +252,32 @@ static bool encode_from_callback(pb_ostream_t *stream, grpc_callback *cb) {
 
   return pb_encode(
       stream, google_internal_cloudlatencytest_v2_AggregatedStats_fields, &agg);
+}
+
+/* ---------------- gRPC : collectd logging ---------------- */
+static void log_gpr_to_collectd(gpr_log_func_args *args) {
+  static int log_unknown_log_level = 1;
+  int log_level;
+  switch (args->severity) {
+    case GPR_LOG_SEVERITY_DEBUG:
+      log_level = LOG_DEBUG;
+      break;
+    case GPR_LOG_SEVERITY_INFO:
+      log_level = LOG_INFO;
+      break;
+    case GPR_LOG_SEVERITY_ERROR:
+      log_level = LOG_ERR;
+      break;
+    default:
+      log_level = LOG_NOTICE;
+      if (--log_unknown_log_level == 0) {
+        ERROR("Unknown GPR log level %d", args->severity);
+        log_unknown_log_level = 512;
+      }
+      break;
+  }
+  plugin_log(log_level, "[grpc] %s:%d: %s",
+             args->file, args->line, args->message);
 }
 
 /* ---------------- gRPC : nanopb interface ---------------- */
@@ -720,6 +747,7 @@ static int load_config(oconfig_item_t *ci)
 
   /* Configuration loaded; set up gRPC */
   if (!grpc_initialized) {
+    gpr_set_log_function(log_gpr_to_collectd);
     grpc_init();
     grpc_initialized = 1;
   }
