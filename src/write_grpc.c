@@ -39,6 +39,14 @@
  * Configuration and workspace
  */
 #define MAX_REPORTS_PER_SEND    256
+
+typedef struct {
+  cdtime_t timestamp;
+  size_t buf_size;
+  size_t buf_len;
+  unsigned char *buf;  /* Owned by this struct */
+} encoded_stats_pb;
+
 typedef struct grpc_callback {
   char *host;
   grpc_credentials *cred;
@@ -49,11 +57,9 @@ typedef struct grpc_callback {
   size_t write_accepted_counter;
   double deadline;
 
-  /* Slices holding encoded Event messages. */
-  /* TODO(arielshaqed): Could just use a regular pre-allocated buffer (and
-   * flush when full). */
-  size_t next_slice;
-  gpr_slice slice[MAX_REPORTS_PER_SEND];
+  /* Buffers holding encoded Event messages. */
+  size_t next_index;
+  encoded_stats_pb encoded_stats[MAX_REPORTS_PER_SEND];
 } grpc_callback;
 
 static void destroy_cb(void *arg)
@@ -65,8 +71,8 @@ static void destroy_cb(void *arg)
   if (cb->channel) grpc_channel_destroy(cb->channel);
   gpr_mu_destroy(&cb->mutex);
   if (cb->cq) grpc_completion_queue_destroy(cb->cq);
-  for (i = 0; i < cb->next_slice; i++)
-    gpr_slice_unref(cb->slice[i]);
+  for (i = 0; i < cb->next_index; i++)
+    free(cb->encoded_stats[i].buf);
   free(cb);
 }
 
@@ -76,6 +82,11 @@ typedef struct data_set_and_value_list_s {
   const data_set_t *ds;
   const value_list_t* vl;
 } data_set_and_value_list_t;
+
+typedef struct grpc_callback_and_num_buffers_s {
+  const grpc_callback *cb;
+  size_t num_buffers;
+} grpc_callback_and_num_buffers_t;
 
 static bool encode_fixed_string(
     pb_ostream_t *stream, const pb_field_t *field, void * const *arg) {
@@ -97,7 +108,7 @@ static pb_callback_t make_string(const char *string) {
   return ret;
 }
 
-static _Bool encode_int_values(
+static bool encode_int_values(
     pb_ostream_t *stream, const pb_field_t *field, void * const *arg) {
   const data_set_and_value_list_t *ds_and_vl =
       *(data_set_and_value_list_t * const *)arg;
@@ -213,6 +224,7 @@ static bool encode_value_list(
    * every reported type.
    */
   stats.time = CDTIME_T_TO_DOUBLE(ds_and_vl->vl->time);
+  stats.has_time = true;
   stats.int_values.funcs.encode = encode_int_values;
   stats.int_values.arg = (void*)ds_and_vl;
   stats.double_values.funcs.encode = encode_double_values;
@@ -229,26 +241,31 @@ static bool encode_value_list(
 /* Encodes all encoded Stats in cb */
 static bool encode_serialized_stats(
     pb_ostream_t *stream, const pb_field_t *field, void * const *arg) {
-  const grpc_callback *cb = *(grpc_callback * const*)arg;
+  const grpc_callback_and_num_buffers_t *cb_and_num =
+      *(grpc_callback_and_num_buffers_t * const*)arg;
+  const grpc_callback *cb = cb_and_num->cb;
   size_t i;
 
-  for (i = 0; i < cb->next_slice; i++) {
+  for (i = 0; i < cb_and_num->num_buffers; i++) {
     if (!pb_encode_tag_for_field(stream, field))
       return false;
-    if (!pb_write(stream,
-                  GPR_SLICE_START_PTR(cb->slice[i]),
-                  GPR_SLICE_LENGTH(cb->slice[i])))
+    if (!pb_write(
+            stream, cb->encoded_stats[i].buf, cb->encoded_stats[i].buf_len))
       return false;
   }
   return true;
 }
 
 /* Encodes already-serialized Stats */
-static bool encode_from_callback(pb_ostream_t *stream, grpc_callback *cb) {
+static bool encode_from_callback(
+    pb_ostream_t *stream, grpc_callback *cb, size_t num_buffers) {
+  grpc_callback_and_num_buffers_t cb_and_num;
   google_internal_cloudlatencytest_v2_AggregatedStats agg;
 
+  cb_and_num.cb = cb;
+  cb_and_num.num_buffers = num_buffers;
   agg.stats.funcs.encode = encode_serialized_stats;
-  agg.stats.arg = cb;
+  agg.stats.arg = &cb_and_num;
 
   return pb_encode(
       stream, google_internal_cloudlatencytest_v2_AggregatedStats_fields, &agg);
@@ -281,32 +298,48 @@ static void log_gpr_to_collectd(gpr_log_func_args *args) {
 }
 
 /* ---------------- gRPC : nanopb interface ---------------- */
-typedef struct {
-  gpr_slice *slice;
-  gpr_uint8 *next;
-} pb_ostream_callback_state_t;
-
-/*
- * Writes message to stream.state, interpretted as a gpr_slice.  Fails once
- * slice is full (size of stream should have been set accordingly).
+/* Writes message to stream->state, interpreted as a encoded_stats_pb.
+ * Fails once it is full (size of stream should have been set accordingly).
  */
-static bool grpc_pb_ostream_callback(
+static bool encoded_stats_ostream_callback(
     pb_ostream_t *stream, const uint8_t* buf, size_t count) {
-  pb_ostream_callback_state_t *cb =
-      (pb_ostream_callback_state_t *) stream->state;
+  encoded_stats_pb *encoded = (encoded_stats_pb *) stream->state;
 
-  if (cb->next + count > GPR_SLICE_END_PTR(*cb->slice)) {
-    fprintf(stderr, "Slice length %zu exceeded; write %zu; offset %zu",
-            GPR_SLICE_LENGTH(*cb->slice),
-            count,
-            cb->next - GPR_SLICE_START_PTR(*cb->slice));
-    return 0;
+  if (encoded->buf_len + count > encoded->buf_size) {
+    ERROR("Buffer length %zu exceeded; write %zu; offset %zu",
+          encoded->buf_size, count, encoded->buf_len);
+    return false;
   }
 
-  memcpy(cb->next, buf, count);
-  cb->next += count;
+  memcpy(encoded->buf + encoded->buf_len, buf, count);
+  encoded->buf_len += count;
 
-  return 1;
+  return true;
+}
+
+/* Writes message to stream->state, interpreted as a
+ * slice_and_offset_t. Fails once it is full (size of stream should have
+ * been set accordingly).
+ */
+typedef struct slice_and_offset_s {
+  gpr_slice slice;
+  size_t offset;
+} slice_and_offset_t;
+
+static bool slice_and_offset_ostream_callback(
+    pb_ostream_t *stream, const uint8_t* buf, size_t count) {
+  slice_and_offset_t *state = (slice_and_offset_t *) stream->state;
+
+  if (state->offset + count > GPR_SLICE_LENGTH(state->slice)) {
+    ERROR("Slice length %zu exceeded; write %zu; offset %zu",
+          GPR_SLICE_LENGTH(state->slice), count, state->offset);
+    return false;
+  }
+
+  memcpy(GPR_SLICE_START_PTR(state->slice) + state->offset, buf, count);
+  state->offset += count;
+
+  return true;
 }
 
 /* Returns a deadline secs into the future */
@@ -366,31 +399,34 @@ static int process_cq(grpc_callback *cb, int do_sleep) {
   return 1;
 }
 
-/* Returns sum of slice sizes */
-static size_t get_sum_slices(const gpr_slice *slice, size_t num) {
+/* Returns sum of buffer lengths */
+static size_t get_sum_lengths(encoded_stats_pb *start, size_t num) {
   size_t i;
   size_t ret = 0;
   for (i = 0; i < num; i++)
-    ret += GPR_SLICE_LENGTH(slice[i]);
+    ret += start->buf_len;
   return ret;
 }
 
 /* Flushes all pending data in cb and waits for gRPC to accept the write.
  * If write queue is full, waits even longer for gRPC to free up some space.
- * Caller must hold cb->mutex.  Returns 0 on success, or an error code. */
-static int do_flush_nolock(grpc_callback *cb) {
-  pb_ostream_callback_state_t stream_state;
+ * If timeout > 0, only pending data older than that will be written out
+ * (this operation can be inefficient if repeated).  Caller must hold
+ * cb->mutex.  Returns 0 on success, or an error code. */
+static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
+  slice_and_offset_t stream_state;
   pb_ostream_t stream;
   gpr_slice slice;
   gpr_slice slice_out;
   grpc_byte_buffer* byte_buffer = NULL;
-  grpc_call *call;
+  grpc_call *call = NULL;
   grpc_event *ev;
   grpc_call_error grpc_rc;
   size_t i;
+  size_t encoded_stats_end;
   int rc = 0;
 
-  if (cb->next_slice == 0)
+  if (cb->next_index == 0)
     return 0;
 
   /* If preceding write has not yet been accepted, sleep for it now, to
@@ -402,35 +438,36 @@ static int do_flush_nolock(grpc_callback *cb) {
     process_cq(cb, 1 /* Wait on CQ */);
   }
 
-  slice = gpr_slice_malloc(get_sum_slices(&cb->slice[0], cb->next_slice) + 512);
-  stream_state.slice = &slice;
-  stream_state.next = GPR_SLICE_START_PTR(*stream_state.slice);
-  stream.callback = grpc_pb_ostream_callback;
+  encoded_stats_end = cb->next_index;
+  if (timeout > 0) {
+    cdtime_t cutoff = cdtime() - timeout;
+    while (encoded_stats_end > 0 &&
+           cb->encoded_stats[encoded_stats_end - 1].timestamp > cutoff)
+      encoded_stats_end--;
+  }
+
+  /* Over-estimate total length: each encoded Stats message will need a
+   * prepended length (2 bytes are enough), plus a short header for framing
+   * AggregatedStats. */
+  slice = gpr_slice_malloc(
+      get_sum_lengths(&cb->encoded_stats[0], encoded_stats_end) +
+      encoded_stats_end * 2 +
+      128);
+  stream_state.slice = slice;
+  stream_state.offset = 0;
+  stream.callback = slice_and_offset_ostream_callback;
   stream.state = &stream_state;
-  stream.max_size = GPR_SLICE_LENGTH(*stream_state.slice);
+  stream.max_size = GPR_SLICE_LENGTH(stream_state.slice);
   stream.bytes_written = 0;
   stream.errmsg = NULL;
 
-  if (!encode_from_callback(&stream, cb)) {
+  if (!encode_from_callback(&stream, cb, encoded_stats_end)) {
     ERROR("write_grpc do_flush_nolock: %s", PB_GET_ERROR(&stream));
     rc = -1;
     goto exit;
   }
 
-  slice_out = gpr_slice_sub(slice, 0, stream.bytes_written);
-
-  do {
-    int fd;
-    if ((fd = open("/tmp/message", O_WRONLY | O_CREAT, 0666)) < 0) {
-      ERROR("open");
-      break;
-    }
-    if (write(fd, GPR_SLICE_START_PTR(slice_out), GPR_SLICE_LENGTH(slice_out)) <
-        GPR_SLICE_LENGTH(slice_out)) {
-      ERROR("short write");
-      break;
-    }
-  } while (0);
+  slice_out = gpr_slice_sub_no_ref(slice, 0, stream.bytes_written);
   byte_buffer = grpc_byte_buffer_create(&slice_out, 1);
 
   call = grpc_channel_create_call(
@@ -481,11 +518,13 @@ static int do_flush_nolock(grpc_callback *cb) {
 
 exit:
   gpr_slice_unref(slice);
-  gpr_slice_unref(slice_out);
   if (byte_buffer) grpc_byte_buffer_destroy(byte_buffer);
-  for (i = 0; i < cb->next_slice; i++)
-    gpr_slice_unref(cb->slice[i]);
-  cb->next_slice = 0;
+  if (call) grpc_call_destroy(call);
+  for (i = 0; i < encoded_stats_end; i++)
+    free(cb->encoded_stats[i].buf);
+  memmove(&cb->encoded_stats[0], &cb->encoded_stats[encoded_stats_end],
+          cb->next_index - encoded_stats_end);
+  cb->next_index -= encoded_stats_end;
 
   return rc;
 }
@@ -509,7 +548,7 @@ static int flush_data(
   }
 
   gpr_mu_lock(&cb->mutex);
-  do_flush_nolock(cb);
+  do_flush_nolock(cb, timeout);
   gpr_mu_unlock(&cb->mutex);
 
   return rc;
@@ -519,11 +558,10 @@ static int write_data(const data_set_t *ds, const value_list_t *vl,
                       user_data_t *user_data)
 {
   data_set_and_value_list_t ds_and_vl;
-  pb_ostream_callback_state_t stream_state;
+  encoded_stats_pb encoded_stats;
   pb_ostream_t stream;
   grpc_callback *cb;
-  gpr_slice slice;
-  gpr_slice slice_out;
+  unsigned char buf[4096];  /* Longer than needed for normal Stats */
   int rc = 0;
 
   cb = user_data->data;
@@ -531,15 +569,19 @@ static int write_data(const data_set_t *ds, const value_list_t *vl,
   ds_and_vl.ds = ds;
   ds_and_vl.vl = vl;
 
+  /* Prepare an encoded_stats buffer; if successfully encoded, we will place
+   * it on cb */
+  encoded_stats.timestamp = vl->time;
+  encoded_stats.buf_size = sizeof(buf);
+  encoded_stats.buf_len = 0;
+  encoded_stats.buf = buf;
+
   gpr_mu_lock(&cb->mutex);
 
   /* Message can be written without gRPC blocking */
-  slice = gpr_slice_malloc(4096);  /* Long enough for reasonable Stats */
-  stream_state.slice = &slice;
-  stream_state.next = GPR_SLICE_START_PTR(*stream_state.slice);
-  stream.callback = grpc_pb_ostream_callback;
-  stream.state = &stream_state;
-  stream.max_size = GPR_SLICE_LENGTH(*stream_state.slice);
+  stream.callback = encoded_stats_ostream_callback;
+  stream.state = &encoded_stats;
+  stream.max_size = sizeof(buf);
   stream.bytes_written = 0;
   stream.errmsg = NULL;
 
@@ -549,21 +591,17 @@ static int write_data(const data_set_t *ds, const value_list_t *vl,
     goto exit;
   }
 
-  /* TODO(arielshaqed): This keeps a ref to slice, leading to increased
-   * memory usage. May be better to have slices consecutive in memory (and
-   * not let gRPC alloc them).
-  */
-  slice_out = gpr_slice_sub(slice, 0, stream.bytes_written);
+  encoded_stats.buf = malloc(encoded_stats.buf_len);
+  memcpy(encoded_stats.buf, buf, encoded_stats.buf_len);
 
-  cb->slice[cb->next_slice++] = slice_out;
-  if (cb->next_slice >= sizeof(cb->slice)/sizeof(cb->slice[0]))
-    do_flush_nolock(cb);
+  cb->encoded_stats[cb->next_index++] = encoded_stats;
+  if (cb->next_index >= sizeof(cb->encoded_stats)/sizeof(cb->encoded_stats[0]))
+    do_flush_nolock(cb, 0);
 
   INFO("write_grpc write_data: %zu/%zu slices",
-       cb->next_slice, sizeof(cb->slice)/sizeof(cb->slice[0]));
+       cb->next_index, sizeof(cb->encoded_stats)/sizeof(cb->encoded_stats[0]));
 
 exit:
-  gpr_slice_unref(slice_out);
   gpr_mu_unlock(&cb->mutex);
 
   return rc;
@@ -583,7 +621,7 @@ exit:
  * specified scopes.
  */
 static grpc_credentials *get_client_credentials(
-    _Bool use_instance_credentials,
+    bool use_instance_credentials,
     const char *service_account_json_filename,
     const char *scopes)
 {
@@ -646,7 +684,7 @@ static grpc_credentials *get_server_credentials(const char *root_pem_filename)
 
 /* Returns credentials for an authenticated connection */
 static grpc_credentials *get_credentials(
-    _Bool use_instance_credentials,
+    bool use_instance_credentials,
     const char *service_account_json_filename,
     const char *scopes,
     const char *root_pem_filename)
@@ -672,7 +710,7 @@ static int load_config(oconfig_item_t *ci)
   static const grpc_channel_args no_args = {0, NULL};
   grpc_callback *cb = NULL;
   user_data_t user_data;
-  _Bool use_instance_credentials = 0;
+  bool use_instance_credentials = 0;
   char *service_account_json_filename = NULL;
   char *scopes = NULL;
   char *root_pem_filename = NULL;
@@ -693,7 +731,7 @@ static int load_config(oconfig_item_t *ci)
   cb->write_counter = 0;
   cb->write_accepted_counter = 0;
   cb->deadline = 20.0;
-  cb->next_slice = 0;
+  cb->next_index = 0;
 
   for (i = 0; i < ci->children_num; i++) {
     oconfig_item_t *child = &ci->children[i];
