@@ -56,8 +56,12 @@ typedef struct grpc_callback {
   size_t write_counter;
   size_t write_accepted_counter;
   double deadline;
+  double data_flush_interval;
 
-  /* Buffers holding encoded Event messages. */
+  pthread_t flush_thread_id;
+  bool flush_thread_started;
+
+  /* Buffers holding encoded Stats messages. */
   size_t next_index;
   encoded_stats_pb encoded_stats[MAX_REPORTS_PER_SEND];
 } grpc_callback;
@@ -426,6 +430,8 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
   size_t encoded_stats_end;
   int rc = 0;
 
+  INFO("DEBUG: Flush %zu Stats", cb->next_index);
+
   if (cb->next_index == 0)
     return 0;
 
@@ -527,6 +533,20 @@ exit:
   cb->next_index -= encoded_stats_end;
 
   return rc;
+}
+
+static void *flush_data_thread(void *arg)
+{
+  grpc_callback *cb = arg;
+
+  while (1) {
+    usleep(cb->data_flush_interval * 1e6);
+    gpr_mu_lock(&cb->mutex);
+    do_flush_nolock(cb, 0);
+    gpr_mu_unlock(&cb->mutex);
+  }
+
+  return NULL;  /* UNREACHED */
 }
 
 static int flush_data(
@@ -703,6 +723,13 @@ static grpc_credentials *get_credentials(
   return ret;
 }
 
+/* Shuts down gRPC systems. */
+static int shutdown()
+{
+  grpc_shutdown();
+  return 0;
+}
+
 /* Loads plugin instance configuration from ci. */
 static int load_config(oconfig_item_t *ci)
 {
@@ -731,6 +758,8 @@ static int load_config(oconfig_item_t *ci)
   cb->write_counter = 0;
   cb->write_accepted_counter = 0;
   cb->deadline = 20.0;
+  cb->data_flush_interval = 2.5;
+  cb->flush_thread_started = false;
   cb->next_index = 0;
 
   for (i = 0; i < ci->children_num; i++) {
@@ -774,6 +803,12 @@ static int load_config(oconfig_item_t *ci)
         goto exit;
       }
     }
+    else if (STR_EQ(child->key, "DataFlushInterval")) {
+      if (cf_util_get_double(child, &cb->data_flush_interval)) {
+        ERROR("Bad DataFlushInterval value");
+        goto exit;
+      }
+    }
 
 #undef  STR_EQ
   }
@@ -805,6 +840,20 @@ static int load_config(oconfig_item_t *ci)
 
   cb->cq = grpc_completion_queue_create();
 
+  rc = plugin_thread_create(
+      &cb->flush_thread_id, NULL /* attributes */, flush_data_thread, cb);
+  if (rc != 0) {
+    char errbuf[128];
+    ERROR("write_grpc: plugin_thread_create failed: %s",
+          sstrerror(errno, errbuf, sizeof(errbuf)));
+    /* Don't trust the user to see an error that appears only once, and fail
+     * the entire configuration attempt.  (But we could work with some
+     * writes delayed.)*/
+    goto exit;
+  }
+  else
+    cb->flush_thread_started = true;
+
   /* Success! */
   rc = 0;
 
@@ -813,7 +862,7 @@ static int load_config(oconfig_item_t *ci)
   plugin_register_write(PLUGIN_NAME, write_data, &user_data);
   user_data.free_func = NULL;
   plugin_register_flush(PLUGIN_NAME, flush_data, &user_data);
-  /* TODO(arielshaqed): shutdown */
+  plugin_register_shutdown(PLUGIN_NAME, shutdown);
 
 exit:
   if (rc < 0 && cb)
