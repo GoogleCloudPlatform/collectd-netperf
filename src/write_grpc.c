@@ -51,6 +51,7 @@ typedef struct grpc_callback {
   char *host;
   grpc_credentials *cred;
   grpc_channel *channel;
+  char *grpc_method_name;
   gpr_mu mutex;  /* Locks cq and *_counter, for concurrent writes */
   grpc_completion_queue *cq;
   size_t write_counter;
@@ -73,6 +74,7 @@ static void destroy_cb(void *arg)
   free(cb->host);
   if (cb->cred) grpc_credentials_release(cb->cred);
   if (cb->channel) grpc_channel_destroy(cb->channel);
+  free(cb->grpc_method_name);
   gpr_mu_destroy(&cb->mutex);
   if (cb->cq) grpc_completion_queue_destroy(cb->cq);
   for (i = 0; i < cb->next_index; i++)
@@ -430,8 +432,6 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
   size_t encoded_stats_end;
   int rc = 0;
 
-  INFO("DEBUG: Flush %zu Stats", cb->next_index);
-
   if (cb->next_index == 0)
     return 0;
 
@@ -478,8 +478,7 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
 
   call = grpc_channel_create_call(
       cb->channel,
-      /* TODO(arielshaqed): Configure this */
-      "/google.internal.cloudlatencytest.v2.StatReporterService/UpdateAggregatedStats",
+      cb->grpc_method_name,
       cb->host,
       get_deadline(cb->deadline));
 
@@ -753,6 +752,7 @@ static int load_config(oconfig_item_t *ci)
   memset(cb, 0, sizeof(*cb));
   cb->cred = NULL;
   cb->channel = NULL;
+  cb->grpc_method_name = NULL;
   gpr_mu_init(&cb->mutex);
   cb->cq = NULL;
   cb->write_counter = 0;
@@ -770,6 +770,12 @@ static int load_config(oconfig_item_t *ci)
     if (STR_EQ(child->key, "Host")) {
       if (cf_util_get_string(child, &cb->host)) {
         ERROR("Non-string Host value");
+        goto exit;
+      }
+    }
+    else if (STR_EQ(child->key, "GrpcMethodName")) {
+      if (cf_util_get_string(child, &cb->grpc_method_name)) {
+        ERROR("Non-string GrpcMethodName value");
         goto exit;
       }
     }
@@ -811,6 +817,16 @@ static int load_config(oconfig_item_t *ci)
     }
 
 #undef  STR_EQ
+  }
+
+  if (!cb->host) {
+    ERROR("Missing Host");
+    goto exit;
+  }
+
+  if (!cb->grpc_method_name) {
+    ERROR("Missing GrpcMethodName to call");
+    goto exit;
   }
 
   if (!root_pem_filename) {
