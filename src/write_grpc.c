@@ -478,12 +478,13 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
 
   call = grpc_channel_create_call(
       cb->channel,
+      cb->cq,
       cb->grpc_method_name,
       cb->host,
       get_deadline(cb->deadline));
 
-  if ((grpc_rc = grpc_call_start_invoke(
-          call, cb->cq, (void*)17, (void*)18, (void*)19, 0) != GRPC_CALL_OK)) {
+  if ((grpc_rc = grpc_call_invoke_old(
+          call, cb->cq, (void*)17, (void*)18, 0) != GRPC_CALL_OK)) {
     ERROR("write_grpc grpc_call_start_invoke: failed %d\n", grpc_rc);
     rc = grpc_rc;
     goto exit;
@@ -505,7 +506,7 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
   }
   grpc_event_finish(ev);
 
-  if ((grpc_rc = grpc_call_start_write(call, byte_buffer, (void*)20, 0)) !=
+  if ((grpc_rc = grpc_call_start_write_old(call, byte_buffer, (void*)20, 0)) !=
       GRPC_CALL_OK) {
     ERROR("write_grpc call write start: %d\n", grpc_rc);
     rc = grpc_rc;
@@ -513,7 +514,7 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
   }
 
   /* Start reading -- but ignore whatever we read */
-  if ((grpc_rc = grpc_call_start_read(call, (void*)21)) != GRPC_CALL_OK) {
+  if ((grpc_rc = grpc_call_start_read_old(call, (void*)21)) != GRPC_CALL_OK) {
     ERROR("grpc_call_read_start: %d\n", grpc_rc);
     rc = grpc_rc;
     goto exit;
@@ -644,6 +645,8 @@ static grpc_credentials *get_client_credentials(
     const char *service_account_json_filename,
     const char *scopes)
 {
+  /* TODO(arielshaqed): Use grpc_google_default_credentials_create()? */
+
   grpc_credentials *cred_client = NULL;
 
   if (use_instance_credentials) {
@@ -687,17 +690,12 @@ static grpc_credentials *get_client_credentials(
 /* Returns cred bound with root CA for authenticating the server */
 static grpc_credentials *get_server_credentials(const char *root_pem_filename)
 {
-  unsigned char root_pem[16384];
-  ssize_t root_pem_size;
   grpc_credentials *cred_server_ssl = NULL;
 
-  if ((root_pem_size = read_file_contents(
-          root_pem_filename, (char *)root_pem, sizeof(root_pem))) < 0) {
-    ERROR("Failed to read SSL server CA PEM file %s", root_pem_filename);
-    return NULL;
-  }
-  cred_server_ssl = grpc_ssl_credentials_create(
-      root_pem, root_pem_size, NULL, 0, NULL, 0);
+  // TODO(arielshaqed): Do we need this? Why not just get user to setenv?
+  if (root_pem_filename)
+    setenv("GRPC_DEFAULT_SSL_ROOTS_FILE_PATH", root_pem_filename, 1);
+  cred_server_ssl = grpc_ssl_credentials_create(NULL, NULL);
   return cred_server_ssl;
 }
 
