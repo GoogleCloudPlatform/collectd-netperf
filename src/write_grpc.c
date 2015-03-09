@@ -31,10 +31,6 @@
 #define PLUGIN_NAME "WriteGRPC"
 #define MONITORING_SCOPES "https://www.googleapis.com/auth/monitoring.readonly"
 
-/* DEBUG LOGS ON! */
-#undef DEBUG
-#define DEBUG INFO
-
 /*
  * Configuration and workspace
  */
@@ -377,23 +373,23 @@ static int process_cq(grpc_callback *cb, int do_sleep) {
     }
     switch (ev->type) {
       case GRPC_WRITE_ACCEPTED:
-        DEBUG("write_grpc process_cb: %s: Write %zu/%zu accepted",
+        INFO("write_grpc process_cb: %s: Write %zu/%zu accepted",
               cb->host, cb->write_accepted_counter, cb->write_counter);
         cb->write_accepted_counter++;
         break;
       case GRPC_CLIENT_METADATA_READ:
-        DEBUG("write_grpc process_cb: %s: Metadata read", cb->host);
+        INFO("write_grpc process_cb: %s: Metadata read", cb->host);
         break;
       case GRPC_READ:
         if (!ev->data.read)
-          DEBUG("write_grpc process_cb: %s: NULL read", cb->host);
+          INFO("write_grpc process_cb: %s: NULL read", cb->host);
         /* TODO(arielshaqed): Handle return code (actual payload is empty). */
         break;
       case GRPC_FINISHED:
-        DEBUG("write_grpc process_cb: %s: Finished", cb->host);
+        INFO("write_grpc process_cb: %s: Finished", cb->host);
         break;
       case GRPC_FINISH_ACCEPTED:
-        DEBUG("write_grpc process_cb: %s: Finish accepted", cb->host);
+        INFO("write_grpc process_cb: %s: Finish accepted", cb->host);
         break;
       default:
         WARNING("write_grpc process_cq: %s: Unexpected event type %d",
@@ -426,7 +422,7 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
   gpr_slice slice_out;
   grpc_byte_buffer* byte_buffer = NULL;
   grpc_call *call = NULL;
-  grpc_event *ev;
+  grpc_event *ev = NULL;
   grpc_call_error grpc_rc;
   size_t i;
   size_t encoded_stats_end;
@@ -439,8 +435,8 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
    * avoid queuing outbound writes. This applies backpressure on the
    * collectd write queue, keeping relatively few messages in gRPC. */
   while (cb->write_accepted_counter < cb->write_counter) {
-    DEBUG("Wait for message %zu for %s to be accepted",
-          cb->write_counter, cb->host);
+    INFO("Wait for message %zu for %s to be accepted",
+         cb->write_counter, cb->host);
     process_cq(cb, 1 /* Wait on CQ */);
   }
 
@@ -478,7 +474,7 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
 
   call = grpc_channel_create_call(
       cb->channel,
-      cb->cq,
+      NULL,  /* TODO(arielshaqed): Batch API needs "cb->cq" here */
       cb->grpc_method_name,
       cb->host,
       get_deadline(cb->deadline));
@@ -505,6 +501,7 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
     goto exit;
   }
   grpc_event_finish(ev);
+  ev = NULL;
 
   if ((grpc_rc = grpc_call_start_write_old(call, byte_buffer, (void*)20, 0)) !=
       GRPC_CALL_OK) {
@@ -526,6 +523,7 @@ exit:
   gpr_slice_unref(slice);
   if (byte_buffer) grpc_byte_buffer_destroy(byte_buffer);
   if (call) grpc_call_destroy(call);
+  if (ev) grpc_event_finish(ev);
   for (i = 0; i < encoded_stats_end; i++)
     free(cb->encoded_stats[i].buf);
   memmove(&cb->encoded_stats[0], &cb->encoded_stats[encoded_stats_end],
@@ -618,8 +616,8 @@ static int write_data(const data_set_t *ds, const value_list_t *vl,
   if (cb->next_index >= sizeof(cb->encoded_stats)/sizeof(cb->encoded_stats[0]))
     do_flush_nolock(cb, 0);
 
-  INFO("write_grpc write_data: %zu/%zu slices",
-       cb->next_index, sizeof(cb->encoded_stats)/sizeof(cb->encoded_stats[0]));
+  DEBUG("write_grpc write_data: %zu/%zu slices",
+        cb->next_index, sizeof(cb->encoded_stats)/sizeof(cb->encoded_stats[0]));
 
 exit:
   gpr_mu_unlock(&cb->mutex);
@@ -748,6 +746,7 @@ static int load_config(oconfig_item_t *ci)
     goto exit;
   }
   memset(cb, 0, sizeof(*cb));
+  cb->host = NULL;
   cb->cred = NULL;
   cb->channel = NULL;
   cb->grpc_method_name = NULL;
