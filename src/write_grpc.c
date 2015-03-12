@@ -410,6 +410,52 @@ static size_t get_sum_lengths(encoded_stats_pb *start, size_t num) {
   return ret;
 }
 
+/* Fills in ops to perform a simple call and returns number of ops. Returns
+ * <0 if ops is too small. Received metadata shall be stored in
+ * initial_metadata_recv and trailing_metadata_recv. */
+static size_t make_call_ops(
+    grpc_byte_buffer *message,
+    grpc_op *ops,
+    size_t ops_size,
+    grpc_metadata_array *initial_metadata_recv,
+    grpc_metadata_array *trailing_metadata_recv,
+    grpc_status_code *status,
+    char **status_details,
+    size_t *status_details_capacity) {
+
+  grpc_op *op = ops;
+  grpc_metadata_array_init(initial_metadata_recv);
+  grpc_metadata_array_init(trailing_metadata_recv);
+  *status_details = NULL;
+  *status_details_capacity = 0;
+
+#define NEXT_OP(type) do { \
+    if (++op >= ops + ops_size) return -1;          \
+    op->op = type;                              \
+  } while (0)
+
+  op->op = GRPC_OP_SEND_INITIAL_METADATA;
+  op->data.send_initial_metadata.count = 0;
+
+  NEXT_OP(GRPC_OP_SEND_MESSAGE);
+  op->data.send_message = message;
+
+  NEXT_OP(GRPC_OP_SEND_CLOSE_FROM_CLIENT);
+
+  NEXT_OP(GRPC_OP_RECV_INITIAL_METADATA);
+  op->data.recv_initial_metadata = initial_metadata_recv;
+
+  NEXT_OP(GRPC_OP_RECV_STATUS_ON_CLIENT);
+  op->data.recv_status_on_client.trailing_metadata = trailing_metadata_recv;
+  op->data.recv_status_on_client.status = status;
+  op->data.recv_status_on_client.status_details = status_details;
+  op->data.recv_status_on_client.status_details_capacity =
+      status_details_capacity;
+#undef NEXT_OP
+
+  return op - ops + 1;
+}
+
 /* Flushes all pending data in cb and waits for gRPC to accept the write.
  * If write queue is full, waits even longer for gRPC to free up some space.
  * If timeout > 0, only pending data older than that will be written out
@@ -421,6 +467,13 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
   gpr_slice slice;
   gpr_slice slice_out;
   grpc_byte_buffer* byte_buffer = NULL;
+  grpc_op ops[10];
+  size_t num_ops;
+  grpc_metadata_array initial_metadata_recv;
+  grpc_metadata_array trailing_metadata_recv;
+  grpc_status_code status;
+  char *status_details = NULL;
+  size_t status_details_capacity;
   grpc_call *call = NULL;
   grpc_event *ev = NULL;
   grpc_call_error grpc_rc;
@@ -472,50 +525,46 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
   slice_out = gpr_slice_sub_no_ref(slice, 0, stream.bytes_written);
   byte_buffer = grpc_byte_buffer_create(&slice_out, 1);
 
+  num_ops = make_call_ops(
+      byte_buffer, ops, sizeof ops / sizeof ops[0],
+      &initial_metadata_recv, &trailing_metadata_recv,
+      &status, &status_details, &status_details_capacity);
   call = grpc_channel_create_call(
       cb->channel,
-      NULL,  /* TODO(arielshaqed): Batch API needs "cb->cq" here */
+      cb->cq,
       cb->grpc_method_name,
       cb->host,
       get_deadline(cb->deadline));
 
-  if ((grpc_rc = grpc_call_invoke_old(
-          call, cb->cq, (void*)17, (void*)18, 0) != GRPC_CALL_OK)) {
-    ERROR("write_grpc grpc_call_start_invoke: failed %d\n", grpc_rc);
+  if ((grpc_rc = grpc_call_start_batch(call, ops, num_ops, (void*)17) !=
+       GRPC_CALL_OK)) {
+    ERROR("write_grpc grpc_call_start_batch: failed %d", grpc_rc);
     rc = grpc_rc;
     goto exit;
   }
 
-  /* TODO(ctiller): Should we pluck? */
   ev = grpc_completion_queue_next(cb->cq, get_deadline(60));
   if (!ev) {
-    ERROR("write_grpc grpc_completion_queue_next: no completion event\n");
+    ERROR("write_grpc grpc_completion_queue_next: no completion event");
     rc = -1;
     goto exit;
   }
 
-  if (ev->data.invoke_accepted != GRPC_OP_OK) {
-    ERROR("write_grpc grpc_completion_queue_next: invoke_accepted %d\n",
-            ev->data.invoke_accepted);
+  if (status != GRPC_STATUS_OK) {
+    ERROR("write_grpc grpc_completion_queue_next: failed: status %d",
+          status);
     rc = -2;
     goto exit;
   }
-  grpc_event_finish(ev);
-  ev = NULL;
 
-  if ((grpc_rc = grpc_call_start_write_old(call, byte_buffer, (void*)20, 0)) !=
-      GRPC_CALL_OK) {
-    ERROR("write_grpc call write start: %d\n", grpc_rc);
-    rc = grpc_rc;
+  if (ev->data.op_complete != GRPC_OP_OK) {
+    ERROR("write_grpc grpc_completion_queue_next: completion failed: %s",
+          status_details ? status_details : "<no details>");
+    rc = -3;
     goto exit;
   }
 
-  /* Start reading -- but ignore whatever we read */
-  if ((grpc_rc = grpc_call_start_read_old(call, (void*)21)) != GRPC_CALL_OK) {
-    ERROR("grpc_call_read_start: %d\n", grpc_rc);
-    rc = grpc_rc;
-    goto exit;
-  }
+  /* (Don't read from stream) */
 
   process_cq(cb, 0 /* don't sleep */);
 
@@ -524,6 +573,7 @@ exit:
   if (byte_buffer) grpc_byte_buffer_destroy(byte_buffer);
   if (call) grpc_call_destroy(call);
   if (ev) grpc_event_finish(ev);
+  gpr_free(status_details);
   for (i = 0; i < encoded_stats_end; i++)
     free(cb->encoded_stats[i].buf);
   memmove(&cb->encoded_stats[0], &cb->encoded_stats[encoded_stats_end],
