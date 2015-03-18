@@ -1331,7 +1331,7 @@ riemann.pb-c.c riemann.pb-c.h: riemann.proto
 endif
 
 # Protocol buffer for the "write_grpc" plugin, compiled with nanopb.
-EXTRA_DIST += grpc_data.proto updater.proto
+EXTRA_DIST += grpc_data.proto grpc_updater.proto
 if HAVE_PROTOC_C
 CLEANFILES += grpc_data.pb.c grpc_data.pb.h
 
