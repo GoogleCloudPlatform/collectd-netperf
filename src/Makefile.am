@@ -1331,9 +1331,16 @@ riemann.pb-c.c riemann.pb-c.h: riemann.proto
 endif
 
 # Protocol buffer for the "write_grpc" plugin, compiled with nanopb.
-EXTRA_DIST += grpc_data.proto grpc_updater.proto   \
-	nanopb/generator/protoc-gen-nanopb         \
+EXTRA_DIST += grpc_data.proto grpc_updater.proto		\
+	nanopb/generator/nanopb_generator.py			\
+	nanopb/generator/proto/Makefile				\
+	nanopb/generator/proto/__init__.py			\
+	nanopb/generator/proto/google/protobuf/descriptor.proto	\
+	nanopb/generator/proto/nanopb.proto			\
+	nanopb/generator/proto/plugin.proto			\
+	nanopb/generator/protoc-gen-nanopb			\
 	nanopb/generator/protoc-gen-nanopb.bat
+
 if HAVE_PROTOC_C
 CLEANFILES += grpc_data.pb.c grpc_data.pb.h
 
