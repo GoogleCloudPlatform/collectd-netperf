@@ -4608,8 +4608,8 @@ then
 	CPPFLAGS="$CPPFLAGS $with_grpc_cppflags"
 	LDFLAGS="$LDFLAGS $with_grpc_ldflags"
 
-	AC_CHECK_LIB(grpc, grpc_channel_create_call, [with_grpc="yes"], [with_grpc="no (Symbol 'grpc_channel_create_call' not found)"], -lgpr -levent -levent_pthreads -lpthread -ldl)
-	AC_CHECK_LIB(grpc, grpc_service_account_credentials_create, [with_grpc="yes"], [with_grpc="no (Crypto symbol 'grpc_service_account_credentials_create' not found)"], -lgpr -levent -levent_pthreads -lpthread -ldl)
+	AC_CHECK_LIB(grpc, grpc_channel_create_call, [with_grpc="yes"], [with_grpc="no (Symbol 'grpc_channel_create_call' not found)"], -lgpr -lpthread -ldl)
+	AC_CHECK_LIB(grpc, grpc_service_account_credentials_create, [with_grpc="yes"], [with_grpc="no (Crypto symbol 'grpc_service_account_credentials_create' not found)"], -lgpr -lpthread -ldl)
 
 	CPPFLAGS="$SAVE_CPPFLAGS"
 	LDFLAGS="$SAVE_LDFLAGS"
@@ -4618,7 +4618,7 @@ if test "x$with_grpc" = "xyes"
 then
 	BUILD_WITH_GRPC_CPPFLAGS="$with_grpc_cppflags"
 	BUILD_WITH_GRPC_LDFLAGS="$with_grpc_ldflags"
-	BUILD_WITH_GRPC_LIBS="-lgrpc -lgpr -levent -levent_pthreads -lpthread"
+	BUILD_WITH_GRPC_LIBS="-lgrpc -lgpr -lpthread"
 	AC_SUBST(BUILD_WITH_GRPC_CPPFLAGS)
 	AC_SUBST(BUILD_WITH_GRPC_LDFLAGS)
 	AC_SUBST(BUILD_WITH_GRPC_LIBS)
