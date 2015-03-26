@@ -1155,10 +1155,10 @@ if BUILD_PLUGIN_WRITE_GRPC
 pkglib_LTLIBRARIES += write_grpc.la
 write_grpc_la_SOURCES = write_grpc.c \
         nanopb/pb_common.c nanopb/pb_encode.c nanopb/pb_decode.c
-write_grpc_la_CPPFLAGS = $(AM_CPPFLAGS) $(BUILD_GRPC_CPPFLAGS) -Inanopb/
+write_grpc_la_CPPFLAGS = $(AM_CPPFLAGS) $(BUILD_WITH_GRPC_CPPFLAGS) -Inanopb/
 write_grpc_la_CFLAGS = $(AM_CFLAGS) $(BUILD_WITH_GRPC_CFLAGS)
 write_grpc_la_LIBADD = $(BUILD_WITH_GRPC_LIBS)
-write_grpc_la_LDFLAGS = $(PLUGIN_LDFLAGS)
+write_grpc_la_LDFLAGS = $(PLUGIN_LDFLAGS) $(BUILD_WITH_GRPC_LDFLAGS)
 nodist_write_grpc_la_SOURCES = grpc_data.pb.c grpc_data.pb.h
 endif
 
@@ -1332,6 +1332,8 @@ endif
 
 # Protocol buffer for the "write_grpc" plugin, compiled with nanopb.
 EXTRA_DIST += grpc_data.proto grpc_updater.proto		\
+	nanopb/pb.h nanopb/pb_common.h				\
+	nanopb/pb_decode.h nanopb/pb_encode.h			\
 	nanopb/generator/nanopb_generator.py			\
 	nanopb/generator/proto/Makefile				\
 	nanopb/generator/proto/__init__.py			\
