@@ -471,7 +471,7 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
   size_t num_ops;
   grpc_metadata_array initial_metadata_recv;
   grpc_metadata_array trailing_metadata_recv;
-  grpc_status_code status;
+  grpc_status_code status = GRPC_STATUS_OK;
   char *status_details = NULL;
   size_t status_details_capacity;
   grpc_call *call = NULL;
