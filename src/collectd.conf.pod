@@ -6894,7 +6894,7 @@ or Google Compute Engine (GCE) per-instance default tokens.
 =item Otherwise, acquire service account credentials in a JSON file, and set
       C<ServiceAccountJsonFile> to the pathname of that file.
 
-=back.
+=back
 
 Synopsis:
 
