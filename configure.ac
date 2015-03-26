@@ -4595,7 +4595,7 @@ then
 
 	AC_CHECK_HEADERS(grpc/grpc.h, [with_grpc="yes"], [with_grpc="no (grpc/grpc.h not found)"])
 	AC_CHECK_HEADERS(grpc/byte_buffer.h)
-	AC_CHECK_HEADERS(grpc/byte_buffer_read.h)
+	AC_CHECK_HEADERS(grpc/byte_buffer_reader.h)
 	AC_CHECK_HEADERS(grpc/grpc_security.h)
 	AC_CHECK_HEADERS(grpc/support/alloc.h)
 
