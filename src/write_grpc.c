@@ -14,6 +14,7 @@
 #include "grpc/support/host_port.h"
 #include "grpc/support/log.h"
 #include "grpc/support/sync.h"
+#include "grpc/support/time.h"
 
 #include "nanopb/pb.h"
 #include "nanopb/pb_encode.h"
@@ -406,7 +407,7 @@ static size_t get_sum_lengths(encoded_stats_pb *start, size_t num) {
   size_t i;
   size_t ret = 0;
   for (i = 0; i < num; i++)
-    ret += start->buf_len;
+    ret += start[i].buf_len;
   return ret;
 }
 
@@ -536,6 +537,12 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
       cb->host,
       get_deadline(cb->deadline));
 
+  if (!call) {
+    ERROR("write_grpc grpc_channel_create_call failed");
+    rc = -1;
+    goto exit;
+  }
+
   if ((grpc_rc = grpc_call_start_batch(call, ops, num_ops, (void*)17) !=
        GRPC_CALL_OK)) {
     ERROR("write_grpc grpc_call_start_batch: failed %d", grpc_rc);
@@ -543,7 +550,7 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
     goto exit;
   }
 
-  ev = grpc_completion_queue_next(cb->cq, get_deadline(60));
+  ev = grpc_completion_queue_next(cb->cq, gpr_inf_future);
   if (!ev) {
     ERROR("write_grpc grpc_completion_queue_next: no completion event");
     rc = -1;
@@ -577,7 +584,7 @@ exit:
   for (i = 0; i < encoded_stats_end; i++)
     free(cb->encoded_stats[i].buf);
   memmove(&cb->encoded_stats[0], &cb->encoded_stats[encoded_stats_end],
-          cb->next_index - encoded_stats_end);
+          (cb->next_index - encoded_stats_end) * sizeof(cb->encoded_stats[0]));
   cb->next_index -= encoded_stats_end;
 
   return rc;
