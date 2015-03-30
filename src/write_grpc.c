@@ -419,6 +419,7 @@ static size_t make_call_ops(
     grpc_op *ops,
     size_t ops_size,
     grpc_metadata_array *initial_metadata_recv,
+    grpc_byte_buffer **response,
     grpc_metadata_array *trailing_metadata_recv,
     grpc_status_code *status,
     char **status_details,
@@ -446,6 +447,9 @@ static size_t make_call_ops(
   NEXT_OP(GRPC_OP_RECV_INITIAL_METADATA);
   op->data.recv_initial_metadata = initial_metadata_recv;
 
+  NEXT_OP(GRPC_OP_RECV_MESSAGE);
+  op->data.recv_message = response;
+
   NEXT_OP(GRPC_OP_RECV_STATUS_ON_CLIENT);
   op->data.recv_status_on_client.trailing_metadata = trailing_metadata_recv;
   op->data.recv_status_on_client.status = status;
@@ -471,6 +475,7 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
   grpc_op ops[10];
   size_t num_ops;
   grpc_metadata_array initial_metadata_recv;
+  grpc_byte_buffer* response = NULL;
   grpc_metadata_array trailing_metadata_recv;
   grpc_status_code status = GRPC_STATUS_OK;
   char *status_details = NULL;
@@ -528,7 +533,7 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
 
   num_ops = make_call_ops(
       byte_buffer, ops, sizeof ops / sizeof ops[0],
-      &initial_metadata_recv, &trailing_metadata_recv,
+      &initial_metadata_recv, &response, &trailing_metadata_recv,
       &status, &status_details, &status_details_capacity);
   call = grpc_channel_create_call(
       cb->channel,
@@ -555,6 +560,14 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
     ERROR("write_grpc grpc_completion_queue_next: no completion event");
     rc = -1;
     goto exit;
+  }
+
+  if (response == NULL) {
+    ERROR("[I] No response received from server");
+    /* Keep going */
+  } else {
+    DEBUG("Received %zu bytes", grpc_byte_buffer_length(response));
+    grpc_byte_buffer_destroy(response);
   }
 
   if (status != GRPC_STATUS_OK) {
