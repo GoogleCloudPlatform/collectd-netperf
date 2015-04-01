@@ -45,6 +45,7 @@ typedef struct {
 } encoded_stats_pb;
 
 typedef struct grpc_callback {
+  struct grpc_callback *next;
   char *host;
   grpc_credentials *cred;
   grpc_channel *channel;
@@ -63,6 +64,8 @@ typedef struct grpc_callback {
   size_t next_index;
   encoded_stats_pb encoded_stats[MAX_REPORTS_PER_SEND];
 } grpc_callback;
+
+static grpc_callback *callbacks = NULL, *last_callback = NULL;
 
 static void destroy_cb(void *arg)
 {
@@ -180,7 +183,7 @@ static bool encode_double_values(
   return true;
 }
 
-bool make_and_encode_string_value(
+static bool make_and_encode_string_value(
     pb_ostream_t *stream, const pb_field_t *field,
     const char *label, const char *value) {
   google_internal_cloudlatencytest_v2_StringValue string_value;
@@ -198,7 +201,7 @@ bool make_and_encode_string_value(
   return true;
 }
 
-bool encode_string_values(
+static bool encode_string_values(
     pb_ostream_t *stream, const pb_field_t *field, void * const *arg) {
   const data_set_and_value_list_t *ds_and_vl =
       *(data_set_and_value_list_t * const *)arg;
@@ -799,7 +802,6 @@ static int shutdown()
 static int load_config(oconfig_item_t *ci)
 {
   static int grpc_initialized = 0;
-  static const grpc_channel_args no_args = {0, NULL};
   grpc_callback *cb = NULL;
   user_data_t user_data;
   bool use_instance_credentials = 0;
@@ -816,11 +818,11 @@ static int load_config(oconfig_item_t *ci)
     goto exit;
   }
   memset(cb, 0, sizeof(*cb));
+  cb->next = NULL;
   cb->host = NULL;
   cb->cred = NULL;
   cb->channel = NULL;
   cb->grpc_method_name = NULL;
-  gpr_mu_init(&cb->mutex);
   cb->cq = NULL;
   cb->write_counter = 0;
   cb->write_accepted_counter = 0;
@@ -901,11 +903,13 @@ static int load_config(oconfig_item_t *ci)
     goto exit;
   }
 
-  /* Configuration loaded; set up gRPC */
+  /* Configuration loaded; read credentials. But do NOT do anything that has
+   * to run in the daemon process (like starting threads or opening
+   * connections) -- without "-f", collectd will daemonize and that will be
+   * left in the old process. */
   if (!grpc_initialized) {
     gpr_set_log_function(log_gpr_to_collectd);
-    grpc_init();
-    grpc_initialized = 1;
+    grpc_initialized = 1;  /* But grpc_init() will be called in init */
   }
 
   if (! (cb->cred = get_credentials(
@@ -915,27 +919,6 @@ static int load_config(oconfig_item_t *ci)
           root_pem_filename)))
     /* Error already logged */
     goto exit;
-
-  cb->channel = grpc_secure_channel_create(cb->cred, cb->host, &no_args);
-  if (!cb->channel)
-    /* Error already logged */
-    goto exit;
-
-  cb->cq = grpc_completion_queue_create();
-
-  rc = plugin_thread_create(
-      &cb->flush_thread_id, NULL /* attributes */, flush_data_thread, cb);
-  if (rc != 0) {
-    char errbuf[128];
-    ERROR("write_grpc: plugin_thread_create failed: %s",
-          sstrerror(errno, errbuf, sizeof(errbuf)));
-    /* Don't trust the user to see an error that appears only once, and fail
-     * the entire configuration attempt.  (But we could work with some
-     * writes delayed.)*/
-    goto exit;
-  }
-  else
-    cb->flush_thread_started = true;
 
   /* Success! */
   rc = 0;
@@ -954,10 +937,61 @@ exit:
   free(scopes);
   free(root_pem_filename);
 
+  if (rc == 0) {
+    /* Add cb to list of callbacks, so we can start its thread in init(). */
+    if (!callbacks)
+      callbacks = last_callback = cb;
+    else {
+      last_callback->next = cb;
+      last_callback = cb;
+    }
+  }
+
   return rc;
+}
+
+static int start_threads(void)
+{
+  static const grpc_channel_args no_args = {0, NULL};
+  grpc_callback *cb;
+  int rc = 0;
+
+  INFO("start_threads PID %u", getpid());
+
+  grpc_init();
+
+  for (cb = callbacks; cb; cb = cb->next) {
+    INFO("start @%p: Connecting to %s", cb, cb->host);
+    gpr_mu_init(&cb->mutex);
+
+    rc = plugin_thread_create(
+        &cb->flush_thread_id, NULL /* attributes */, flush_data_thread, cb);
+    if (rc != 0) {
+      char errbuf[128];
+      ERROR("write_grpc: plugin_thread_create failed: %s",
+            sstrerror(errno, errbuf, sizeof(errbuf)));
+      /* Too late to fail configuration. Fail here so user might look at
+       * logs. */
+      return 1;
+    }
+    else
+      cb->flush_thread_started = true;
+
+    cb->channel = grpc_secure_channel_create(cb->cred, cb->host, &no_args);
+    if (!cb->channel)
+      /* Error already logged */
+      return 2;
+
+    cb->cq = grpc_completion_queue_create();
+  }
+
+  return 0;
 }
 
 void module_register(void)
 {
   plugin_register_complex_config(PLUGIN_NAME, load_config);
+  /* Config is called before daemonizing, init after.  Have to start threads
+   * in init. */
+  plugin_register_init(PLUGIN_NAME, start_threads);
 }
