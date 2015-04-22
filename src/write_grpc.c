@@ -30,7 +30,6 @@
 #include <string.h>
 
 #define PLUGIN_NAME "WriteGRPC"
-#define MONITORING_SCOPES "https://www.googleapis.com/auth/monitoring.readonly"
 
 /*
  * Configuration and workspace
@@ -708,16 +707,13 @@ exit:
  *
  * If service_account_json_filename is true, it should be the name of
  * a file containing the JSON service account credentials downloaded
- * from the GCE developer's console.  Returns credentials bound to use
- * specified scopes.
+ * from the GCE developer's console.  Returns JWT credentials (bound
+ * to use only the gRPC channel service).
  */
 static grpc_credentials *get_client_credentials(
     bool use_instance_credentials,
-    const char *service_account_json_filename,
-    const char *scopes)
+    const char *service_account_json_filename)
 {
-  /* TODO(arielshaqed): Use grpc_google_default_credentials_create()? */
-
   grpc_credentials *cred_client = NULL;
 
   if (use_instance_credentials) {
@@ -745,8 +741,8 @@ static grpc_credentials *get_client_credentials(
       return NULL;
     }
     json[json_len] = '\0';  /* Ensure readable string */
-    if (! (cred_client = grpc_service_account_credentials_create(
-            json, scopes, grpc_max_auth_token_lifetime))) {
+    if (! (cred_client = grpc_jwt_credentials_create(
+            json, grpc_max_auth_token_lifetime))) {
       ERROR("Failed to create credentials from ServiceAccountJsonFile %s",
             service_account_json_filename);
       return NULL;
@@ -774,11 +770,10 @@ static grpc_credentials *get_server_credentials(const char *root_pem_filename)
 static grpc_credentials *get_credentials(
     bool use_instance_credentials,
     const char *service_account_json_filename,
-    const char *scopes,
     const char *root_pem_filename)
 {
   grpc_credentials *cred_client = get_client_credentials(
-      use_instance_credentials, service_account_json_filename, scopes);
+      use_instance_credentials, service_account_json_filename);
   grpc_credentials *cred_server = get_server_credentials(root_pem_filename);
   grpc_credentials *ret = NULL;
 
@@ -806,7 +801,6 @@ static int load_config(oconfig_item_t *ci)
   user_data_t user_data;
   bool use_instance_credentials = 0;
   char *service_account_json_filename = NULL;
-  char *scopes = NULL;
   char *root_pem_filename = NULL;
   int i;
   int rc = -1;
@@ -860,12 +854,6 @@ static int load_config(oconfig_item_t *ci)
         goto exit;
       }
     }
-    else if (STR_EQ(child->key, "Scopes")) {
-      if (cf_util_get_string(child, &scopes)) {
-        ERROR("Non-string Scopes value");
-        goto exit;
-      }
-    }
     else if (STR_EQ(child->key, "RootPEMFile")) {
       if (cf_util_get_string(child, &root_pem_filename)) {
         ERROR("Non-string RootPEMFile value");
@@ -915,7 +903,6 @@ static int load_config(oconfig_item_t *ci)
   if (! (cb->cred = get_credentials(
           use_instance_credentials,
           service_account_json_filename,
-          scopes ? scopes : MONITORING_SCOPES,
           root_pem_filename)))
     /* Error already logged */
     goto exit;
@@ -934,7 +921,6 @@ exit:
   if (rc < 0 && cb)
     destroy_cb(cb);
   free(service_account_json_filename);
-  free(scopes);
   free(root_pem_filename);
 
   if (rc == 0) {
