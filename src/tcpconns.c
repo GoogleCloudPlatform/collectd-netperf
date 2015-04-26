@@ -505,14 +505,15 @@ typedef struct value_list_batch_s {
 
 static value_list_batch_t *value_list_batch_create(size_t size)
 {
-    value_list_batch_t *ret =
-        malloc(sizeof(value_list_batch_t) + (size - 1) * sizeof(value_list_t));
+    value_list_batch_t *ret;
     size_t i;
     const value_list_t vl_init = VALUE_LIST_INIT;
     if (size < 4) {
         ERROR("Buffer size %zu < 4; using 4", size);
         size = 4;
     }
+    ret =
+        malloc(sizeof(value_list_batch_t) + (size - 1) * sizeof(value_list_t));
     ret->size = size;
     for (i = 0; i < size; i++)
         ret->buffer[i] = vl_init;
