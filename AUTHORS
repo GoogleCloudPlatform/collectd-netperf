@@ -81,6 +81,9 @@ Cyril Feraudet <cyril at feraudet.com>
 Dan Berrange <berrange at redhat.com>
  - uuid plugin.
 
+Dan Ryder <daryder at cisco.com>
+ - ceph plugin.
+
 David Bacher <drbacher at gmail.com>
  - serial plugin.
 
@@ -102,6 +105,9 @@ Fabian Linzberger <e at lefant.net>
 
 Fabien Wernli <cpan at faxm0dem.org>
  - Solaris improvements in the memory and interfaces plugin.
+
+Fabrice A. Marie <fabrice at kibinlabs.com>
+ - write_sensu plugin.
 
 Flavio Stanchina <flavio at stanchina.net>
  - mbmon plugin.

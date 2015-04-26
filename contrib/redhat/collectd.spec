@@ -14,10 +14,12 @@
 # - enable the EPEL repository (http://dl.fedoraproject.org/pub/epel/) in the
 #   configuration files for your target systems (/etc/mock/*.cfg).
 #
-# - copy this file in your ~/rpmbuild/SPECS/ directory
-#
 # - fetch the desired collectd release file from https://collectd.org/files/
-#   and save it in your ~/rpmbuild/SOURCES/ directory
+#   and save it in your ~/rpmbuild/SOURCES/ directory (or build your own out of
+#   the git repository: ./build.sh && ./configure && make-dist-bz2)
+#
+# - copy this file in your ~/rpmbuild/SPECS/ directory. Make sure the
+#   "Version:" tag matches the version from the tarball.
 #
 # - build the SRPM first:
 #   mock -r centos-6-x86_64 --buildsrpm --spec ~/rpmbuild/SPECS/collectd.spec \
@@ -34,6 +36,7 @@
 #
 
 %global _hardened_build 1
+%{?perl_default_filter}
 
 # plugins only buildable on RHEL6
 # (NB: %{elN} macro is not available on RHEL < 6)
@@ -72,6 +75,7 @@
 %define with_ascent 0%{!?_without_ascent:1}
 %define with_battery 0%{!?_without_battery:1}
 %define with_bind 0%{!?_without_bind:1}
+%define with_ceph 0%{!?_without_ceph:0%{?_has_libyajl}}
 %define with_cgroups 0%{!?_without_cgroups:1}
 %define with_conntrack 0%{!?_without_conntrack:1}
 %define with_contextswitch 0%{!?_without_contextswitch:1}
@@ -95,6 +99,7 @@
 %define with_gmond 0%{!?_without_gmond:0%{?_has_recent_libganglia}}
 %define with_hddtemp 0%{!?_without_hddtemp:1}
 %define with_interface 0%{!?_without_interface:1}
+%define with_ipc 0%{!?_without_ipc:1}
 %define with_ipmi 0%{!?_without_ipmi:1}
 %define with_iptables 0%{!?_without_iptables:0%{?_has_working_libiptc}}
 %define with_ipvs 0%{!?_without_ipvs:0%{?_has_ip_vs_h}}
@@ -165,6 +170,7 @@
 %define with_write_log 0%{!?_without_write_log:1}
 %define with_write_redis 0%{!?_without_write_redis:0%{?_has_hiredis}}
 %define with_write_riemann 0%{!?_without_write_riemann:1}
+%define with_write_sensu 0%{!?_without_write_sensu:1}
 %define with_write_tsdb 0%{!?_without_write_tsdb:1}
 %define with_zfs_arc 0%{!?_without_zfs_arc:1}
 %define with_zookeeper 0%{!?_without_zookeeper:1}
@@ -207,7 +213,7 @@
 
 Summary:	Statistics collection daemon for filling RRD files
 Name:		collectd
-Version:	5.4.0
+Version:	5.4.2
 Release:	1%{?dist}
 URL:		http://collectd.org
 Source:		http://collectd.org/files/%{name}-%{version}.tar.bz2
@@ -296,6 +302,16 @@ BuildRequires:	libxml2-devel, curl-devel
 %description bind
 The BIND plugin retrieves this information that's encoded in XML and provided
 via HTTP and submits the values to collectd.
+%endif
+
+%if %{with_ceph}
+%package ceph
+Summary:       Ceph plugin for collectd
+Group:         System Environment/Daemons
+Requires:      %{name}%{?_isa} = %{version}-%{release}
+BuildRequires: yajl-devel
+%description ceph
+Ceph plugin for collectd
 %endif
 
 %if %{with_curl}
@@ -905,6 +921,12 @@ Collectd utilities
 %define _with_csv --disable-csv
 %endif
 
+%if %{with_ceph}
+%define _with_ceph --enable-ceph
+%else
+%define _with_ceph --disable-ceph
+%endif
+
 %if %{with_curl}
 %define _with_curl --enable-curl
 %else
@@ -1005,6 +1027,12 @@ Collectd utilities
 %define _with_interface --enable-interface
 %else
 %define _with_interface --disable-interface
+%endif
+
+%if %{with_ipc}
+%define _with_ipc --enable-ipc
+%else
+%define _with_ipc --disable-ipc
 %endif
 
 %if %{with_ipmi}
@@ -1503,6 +1531,12 @@ Collectd utilities
 %define _with_write_riemann --disable-write_riemann
 %endif
 
+%if %{with_write_sensu}
+%define _with_write_sensu --enable-write_sensu
+%else
+%define _with_write_sensu --disable-write_sensu
+%endif
+
 %if %{with_write_tsdb}
 %define _with_write_tsdb --enable-write_tsdb
 %else
@@ -1551,6 +1585,7 @@ Collectd utilities
 	%{?_with_barometer} \
 	%{?_with_battery} \
 	%{?_with_bind} \
+	%{?_with_ceph} \
 	%{?_with_cgroups} \
 	%{?_with_conntrack} \
 	%{?_with_contextswitch} \
@@ -1574,6 +1609,7 @@ Collectd utilities
 	%{?_with_gmond} \
 	%{?_with_hddtemp} \
 	%{?_with_interface} \
+	%{?_with_ipc} \
 	%{?_with_ipmi} \
 	%{?_with_iptables} \
 	%{?_with_ipvs} \
@@ -1660,6 +1696,7 @@ Collectd utilities
 	%{?_with_write_http} \
 	%{?_with_write_log} \
 	%{?_with_write_riemann} \
+	%{?_with_write_sensu} \
 	%{?_with_write_tsdb}
 
 
@@ -1681,20 +1718,16 @@ rm -rf %{buildroot}
 %{__mkdir} -p %{buildroot}%{_localstatedir}/www
 %{__mkdir} -p %{buildroot}/%{_sysconfdir}/httpd/conf.d
 
-%{__cp} -a contrib/collection3 %{buildroot}%{_localstatedir}/www
-%{__cp} -a contrib/redhat/collection3.conf %{buildroot}/%{_sysconfdir}/httpd/conf.d/
+%{__mv} contrib/collection3 %{buildroot}%{_localstatedir}/www
+%{__mv} contrib/redhat/collection3.conf %{buildroot}/%{_sysconfdir}/httpd/conf.d/
 
-%{__cp} -a contrib/php-collection %{buildroot}%{_localstatedir}/www
-%{__cp} -a contrib/redhat/php-collection.conf %{buildroot}/%{_sysconfdir}/httpd/conf.d/
+%{__mv} contrib/php-collection %{buildroot}%{_localstatedir}/www
+%{__mv} contrib/redhat/php-collection.conf %{buildroot}/%{_sysconfdir}/httpd/conf.d/
 
 ### Clean up docs
 find contrib/ -type f -exec %{__chmod} a-x {} \;
 # *.la files shouldn't be distributed.
 rm -f %{buildroot}/%{_libdir}/{collectd/,}*.la
-
-# Move the Perl examples to a separate directory.
-mkdir perl-examples
-find contrib -name '*.p[lm]' -exec mv {} perl-examples/ \;
 
 # Remove Perl hidden .packlist files.
 find %{buildroot} -type f -name .packlist -delete
@@ -1710,7 +1743,6 @@ rm -f %{buildroot}%{_mandir}/man5/collectd-java.5*
 %if ! %{with_perl}
 rm -f %{buildroot}%{_mandir}/man5/collectd-perl.5*
 rm -f %{buildroot}%{_mandir}/man3/Collectd::Unixsock.3pm*
-rm -fr perl-examples/
 rm -fr %{buildroot}/usr/lib/perl5/
 %endif
 
@@ -1857,6 +1889,9 @@ fi
 %if %{with_interface}
 %{_libdir}/%{name}/interface.so
 %endif
+%if %{with_ipc}
+%{_libdir}/%{name}/ipc.so
+%endif
 %if %{with_ipvs}
 %{_libdir}/%{name}/ipvs.so
 %endif
@@ -1977,6 +2012,9 @@ fi
 %if %{with_write_log}
 %{_libdir}/%{name}/write_log.so
 %endif
+%if %{with_write_sensu}
+%{_libdir}/%{name}/write_sensu.so
+%endif
 %if %{with_write_tsdb}
 %{_libdir}/%{name}/write_tsdb.so
 %endif
@@ -2034,6 +2072,11 @@ fi
 %if %{with_bind}
 %files bind
 %{_libdir}/%{name}/bind.so
+%endif
+
+%if %{with_ceph}
+%files ceph
+%{_libdir}/%{name}/ceph.so
 %endif
 
 %if %{with_curl}
@@ -2166,7 +2209,6 @@ fi
 
 %if %{with_perl}
 %files perl
-%doc perl-examples/*
 %{perl_vendorlib}/Collectd.pm
 %{perl_vendorlib}/Collectd/
 %{_mandir}/man3/Collectd::Unixsock.3pm*
@@ -2271,7 +2313,7 @@ fi
 %changelog
 # * TODO 5.5.0-1
 # - New upstream version
-# - New plugins enabled by default: drbd, log_logstash, write_tsdb, smart, openldap, redis, write_redis, zookeeper, write_log
+# - New plugins enabled by default: ceph, drbd, log_logstash, write_tsdb, smart, openldap, redis, write_redis, zookeeper, write_log, write_sensu, ipc
 # - New plugins disabled by default: barometer, write_kafka
 # - Enable zfs_arc, now supported on Linux
 # - Install disk plugin in a dedicated package, as it depends on libudev
@@ -2297,6 +2339,10 @@ fi
 - Enabled netlink plugin on RHEL6 and RHEL7
 - Allow perl plugin to build on RHEL5
 - Add support for RHEL7
+- Misc perl-related improvements:
+  * prevent rpmbuild from extracting dependencies from files in /usr/share/doc
+  * don't package collection3 and php-collection twice
+  * keep perl scripts from contrib/ in collectd-contrib
 
 * Wed Apr 10 2013 Marc Fournier <marc.fournier@camptocamp.com> 5.3.0-1
 - New upstream version
