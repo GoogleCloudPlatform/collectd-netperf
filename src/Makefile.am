@@ -171,6 +171,15 @@ bind_la_CFLAGS = $(AM_CFLAGS) \
 bind_la_LIBADD = $(BUILD_WITH_LIBCURL_LIBS) $(BUILD_WITH_LIBXML2_LIBS)
 endif
 
+if BUILD_PLUGIN_CEPH
+pkglib_LTLIBRARIES += ceph.la
+ceph_la_SOURCES = ceph.c
+ceph_la_CFLAGS = $(AM_CFLAGS)
+ceph_la_LDFLAGS = $(PLUGIN_LDFLAGS) $(BUILD_WITH_LIBYAJL_LDFLAGS)
+ceph_la_CPPFLAGS = $(AM_CPPFLAGS) $(BUILD_WITH_LIBYAJL_CPPFLAGS)
+ceph_la_LIBADD = $(BUILD_WITH_LIBYAJL_LIBS)
+endif
+
 if BUILD_PLUGIN_CGROUPS
 pkglib_LTLIBRARIES += cgroups.la
 cgroups_la_SOURCES = cgroups.c \
@@ -396,6 +405,13 @@ if BUILD_WITH_PERFSTAT
 interface_la_LIBADD += -lperfstat
 endif
 endif # BUILD_PLUGIN_INTERFACE
+
+if BUILD_PLUGIN_IPC
+pkglib_LTLIBRARIES += ipc.la
+ipc_la_SOURCES = ipc.c
+ipc_la_CFLAGS = $(AM_CFLAGS)
+ipc_la_LDFLAGS = $(PLUGIN_LDFLAGS)
+endif
 
 if BUILD_PLUGIN_IPTABLES
 pkglib_LTLIBRARIES += iptables.la
@@ -681,7 +697,7 @@ if BUILD_PLUGIN_NOTIFY_EMAIL
 pkglib_LTLIBRARIES += notify_email.la
 notify_email_la_SOURCES = notify_email.c
 notify_email_la_LDFLAGS = $(PLUGIN_LDFLAGS)
-notify_email_la_LIBADD = -lesmtp -lssl -lcrypto -lpthread -ldl
+notify_email_la_LIBADD = -lesmtp -lssl -lcrypto -lpthread
 endif
 
 if BUILD_PLUGIN_NTPD
@@ -769,6 +785,7 @@ perl_la_CFLAGS += -Wno-nonnull
 endif
 perl_la_LDFLAGS = $(PLUGIN_LDFLAGS) \
 		$(PERL_LDFLAGS)
+perl_la_LIBADD = $(PERL_LIBS)
 endif
 
 if BUILD_PLUGIN_PF
@@ -1175,6 +1192,13 @@ write_kafka_la_LDFLAGS = $(PLUGIN_LDFLAGS) $(BUILD_WITH_LIBRDKAFKA_LDFLAGS)
 write_kafka_la_LIBADD = $(BUILD_WITH_LIBRDKAFKA_LIBS)
 endif
 
+if BUILD_PLUGIN_WRITE_LOG
+pkglib_LTLIBRARIES += write_log.la
+write_log_la_SOURCES = write_log.c \
+                        utils_format_graphite.c utils_format_graphite.h
+write_log_la_LDFLAGS = $(PLUGIN_LDFLAGS)
+endif
+
 if BUILD_PLUGIN_WRITE_MONGODB
 pkglib_LTLIBRARIES += write_mongodb.la
 write_mongodb_la_SOURCES = write_mongodb.c
@@ -1197,6 +1221,12 @@ write_riemann_la_SOURCES = write_riemann.c write_riemann_threshold.c
 nodist_write_riemann_la_SOURCES = riemann.pb-c.c riemann.pb-c.h
 write_riemann_la_LDFLAGS = $(PLUGIN_LDFLAGS)
 write_riemann_la_LIBADD = -lprotobuf-c
+endif
+
+if BUILD_PLUGIN_WRITE_SENSU
+pkglib_LTLIBRARIES += write_sensu.la
+write_sensu_la_SOURCES = write_sensu.c
+write_sensu_la_LDFLAGS = $(PLUGIN_LDFLAGS)
 endif
 
 if BUILD_PLUGIN_WRITE_TSDB
@@ -1334,6 +1364,7 @@ check_PROGRAMS = test_common test_utils_avltree test_utils_heap test_utils_mount
 
 test_common_SOURCES = tests/test_common.c \
                       daemon/common.h daemon/common.c \
+                      tests/macros.h \
                       tests/mock/plugin.c \
                       tests/mock/utils_cache.c \
                       tests/mock/utils_time.c
