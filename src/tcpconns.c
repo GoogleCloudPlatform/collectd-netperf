@@ -60,6 +60,7 @@
 #include "collectd.h"
 #include "common.h"
 #include "plugin.h"
+#include "safe_iop.h"
 
 #if defined(__OpenBSD__) || defined(__NetBSD__)
 #undef HAVE_SYSCTLBYNAME /* force HAVE_LIBKVM_NLIST path */
@@ -506,14 +507,26 @@ typedef struct value_list_batch_s {
 static value_list_batch_t *value_list_batch_create(size_t size)
 {
     value_list_batch_t *ret;
+    size_t ret_size;
     size_t i;
     const value_list_t vl_init = VALUE_LIST_INIT;
-    if (size < 4) {
+    if (size < 4)
+    {
         ERROR("Buffer size %zu < 4; using 4", size);
         size = 4;
     }
-    ret =
-        malloc(sizeof(value_list_batch_t) + (size - 1) * sizeof(value_list_t));
+    if (!safe_mul(&ret_size, size-1, sizeof(value_list_t)) ||
+        !safe_add(&ret_size, ret_size, sizeof(value_list_batch_t)))
+    {
+        ERROR("Buffer size overflow for %zu + %zu * %zu",
+              sizeof(value_list_batch_t), size-1, sizeof(value_list_t));
+        return NULL;
+    }
+    if (!(ret = malloc(ret_size))) {
+        ERROR("Failed to allocate %zu byte buffer for value_list_batch",
+              ret_size);
+        return NULL;
+    }
     ret->size = size;
     for (i = 0; i < size; i++)
         ret->buffer[i] = vl_init;
@@ -633,6 +646,12 @@ static int conn_read_netlink (void)
   struct inet_diag_msg *r;
   value_list_batch_t *batch = value_list_batch_create(2048);
   char buf[32768];
+
+  if (!batch)
+  {
+    /* Error already logged */
+    return (-1);
+  }
 
   /* If this fails, it's likely a permission problem. We'll fall back to
    * reading this information from files below. */
