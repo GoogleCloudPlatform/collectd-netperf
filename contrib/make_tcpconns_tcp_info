@@ -46,7 +46,7 @@ class TcpHProcessor(object):
     #
     # This doesn't work for multi-line comments, so we just junk every
     # line starting "*".  That's good enough for a Linux header file.
-    line = re.sub(r'\/\*[^*]*(?:\*[^/][^*]*)\*\/', '', line)
+    line = re.sub(r'\/\*[^*]*(?:\*[^/][^*]*)*\*\/', '', line)
     line = re.sub(r'^\s*\*.*$', '', line)
 
     m = re.match('^\s*$', line)
