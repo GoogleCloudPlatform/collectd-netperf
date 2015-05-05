@@ -16,7 +16,7 @@ class TcpHProcessor(object):
   # Map indexing specified C type to fields DS_TYPE, NICE_C_TYPE, C_SIZE.
   # DS_TYPE can also be "SKIP", to go past this field.
   c_types = {
-      '__u8': ('SKIP', None, 1),
+      '__u8': ('GAUGE', 'uint8', 1),
       '__u32': ('GAUGE', 'uint32', 4),
       '__u64': ('ABSOLUTE', 'uint64', 8),
       }

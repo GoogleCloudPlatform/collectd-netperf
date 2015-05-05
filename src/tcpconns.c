@@ -152,6 +152,7 @@ struct nlreq {
 
 /* Identifies fields to report from tcp_info */
 enum tcpi_field_type {
+  UINT8  = 1,
   UINT32 = 4,
   UINT64 = 8,
 };
@@ -314,15 +315,13 @@ static int connections_age_limit_msecs = -1;
 static port_entry_t *port_list_head = NULL;
 static uint32_t count_total[TCP_STATE_MAX + 1];
 
-enum bool {false, true};
-
 #if KERNEL_LINUX
 #if HAVE_STRUCT_LINUX_INET_DIAG_REQ
-static enum bool parse_ds_type(const char *str, int *ds_type) {
+static _Bool parse_ds_type(const char *str, int *ds_type) {
 #define STR_CASE(name) do {                               \
       if (strcasecmp(str, #name) == 0) {                  \
         *ds_type = DS_TYPE_ ## name;                      \
-        return true;                                      \
+        return 1;                                         \
       }                                                   \
   } while (0)
 
@@ -330,25 +329,30 @@ static enum bool parse_ds_type(const char *str, int *ds_type) {
   STR_CASE(GAUGE);
   STR_CASE(DERIVE);
   STR_CASE(ABSOLUTE);
-  return false;
+  return 0;
 #undef STR_CASE
 }
 
-static enum bool parse_c_type(const char *str, enum tcpi_field_type *c_type) {
+static _Bool parse_c_type(const char *str, enum tcpi_field_type *c_type) {
 #define STR_CASE(name) do {                               \
       if (strcasecmp(str, #name) == 0) {                  \
         *c_type = name;                                   \
-        return true;                                      \
+        return 1;                                         \
       }                                                   \
   } while (0)
 
+  STR_CASE(UINT8);
   STR_CASE(UINT32);
   STR_CASE(UINT64);
-  return false;
+  return 0;
 #undef STR_CASE
 }
 
-static enum bool parse_tcpinfo_field_selector(
+static void tcpinfo_field_selector_dispose(struct tcpi_field_selector *field) {
+  sfree(*(char**)&field->name);
+}
+
+static _Bool parse_tcpinfo_field_selector(
     const char *selector_orig, struct tcpi_field_selector *field) {
   /* Parse a field selector that looks like this:
         NAME      DS_TYPE     C_TYPE:OFFSET
@@ -358,7 +362,7 @@ static enum bool parse_tcpinfo_field_selector(
   char *token;
   const char *c_type_string;
   const char *offset_string;
-  enum bool rc = false;
+  _Bool rc = 0;
   if (!(token = strtok_r(selector, " \t\n,", &parse_ptr))) {
     ERROR ("Field selector \"%s\" missing NAME", selector_orig);
     goto exit;
@@ -403,10 +407,10 @@ static enum bool parse_tcpinfo_field_selector(
            offset_string, selector_orig);
     goto exit;
   }
-  rc = true;
+  rc = 1;
 
 exit:
-  free(selector);
+  sfree(selector);
   return rc;
 }
 
@@ -715,7 +719,7 @@ static void conn_handle_tcpi(
         tcp_state[state] : "UNKNOWN";
     int tcpi_field_index;
     int value_index;
-    enum bool ok = true;
+    _Bool ok = 1;
 
     vl->values = calloc(num_tcpi_fields_to_report, sizeof(value_t));
     sstrncpy (vl->host, hostname_g, sizeof (vl->host));
@@ -739,11 +743,14 @@ static void conn_handle_tcpi(
                  field->offset,
                  TCPI_FIELD_TYPE_SIZE(field->tcpi_type),
                  tcpi_size);
-          ok = false;
+          ok = 0;
           break;
         }
         value_bytes = (unsigned char *)tcpi + field->offset;
         switch(field->tcpi_type) {
+          case UINT8:
+            value = *(uint8_t*)value_bytes;
+            break;
           case UINT32:
             value = *(uint32_t*)value_bytes;
             break;
@@ -1104,8 +1111,10 @@ static int conn_config (const char *key, const char *value)
   }
   else if (strcasecmp (key, "TCPInfoField") == 0) {
     struct tcpi_field_selector field;
+    field.name = NULL;
     if (!parse_tcpinfo_field_selector(value, &field)) {
       ERROR ("tcpconns plugin: Failed to parse field selector \"%s\"", value);
+      tcpinfo_field_selector_dispose(&field);
       return (1);
     }
     if (tcpi_fields_to_report_size <= num_tcpi_fields_to_report) {
@@ -1117,6 +1126,7 @@ static int conn_config (const char *key, const char *value)
               tcpi_fields_to_report_size * sizeof(*tcpi_fields_to_report)))) {
         ERROR ("tcpconns plugin: Out of memory for %zu fields (field %s)",
                tcpi_fields_to_report_size, value);
+        tcpinfo_field_selector_dispose(&field);
         return (1);
       }
     }
