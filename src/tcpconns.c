@@ -1145,6 +1145,12 @@ static int conn_init (void)
   {  /* Define what dataset we shall be reporting */
     data_set_t data_set;
     size_t i;
+    if (num_tcpi_fields_to_report == 0 && report_by_connections) {
+        ERROR("TCPConns plugin: "
+              "ReportByConnections requested, "
+              "but no TCPInfoField lines configured.");
+        return 1;
+    }
     strncpy(data_set.type, "tcp_connections_perf", sizeof(data_set.type));
     data_set.ds_num = num_tcpi_fields_to_report;
     data_set.ds = calloc(num_tcpi_fields_to_report, sizeof(*data_set.ds));
