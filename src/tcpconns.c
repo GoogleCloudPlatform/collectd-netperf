@@ -391,7 +391,7 @@ static enum bool parse_tcpinfo_field_selector(
     goto exit;
   }
   errno = 0;
-  field->offset = strtoul(offset_string, &token, 0);
+  field->offset = strtoull(offset_string, &token, 0);
   if (errno) {
     char err[256];
     ERROR ("Bad offset \"%s\" in field selector \"%s\": %s",
@@ -669,11 +669,17 @@ static int value_list_batch_maybe_flush(value_list_batch_t *batch)
 }
 
 /* Returns a value_list to populate with values; must call
- * value_list_batch_release before calling again. */
+ * value_list_batch_release or value_list_batch_abort before calling again. */
 static value_list_t *value_list_batch_get(value_list_batch_t *batch)
 {
     value_list_batch_maybe_flush(batch);
     return &batch->buffer[batch->cur];
+}
+
+/* Frees value_list without sending it on. */
+static void value_list_batch_abort(value_list_batch_t *batch)
+{
+  free(batch->buffer[batch->cur].values);
 }
 
 static void value_list_batch_release(value_list_batch_t *batch)
@@ -709,6 +715,7 @@ static void conn_handle_tcpi(
         tcp_state[state] : "UNKNOWN";
     int tcpi_field_index;
     int value_index;
+    enum bool ok = true;
 
     vl->values = calloc(num_tcpi_fields_to_report, sizeof(value_t));
     sstrncpy (vl->host, hostname_g, sizeof (vl->host));
@@ -725,14 +732,15 @@ static void conn_handle_tcpi(
         uint64_t value;
         if (field->offset + TCPI_FIELD_TYPE_SIZE(field->tcpi_type) >
             tcpi_size) {
-          WARNING ("tcpconns plugin: conn_handle_tcpi: "
-                   "Field %s not in reported tcp_info "
-                   "(%" PRIu32 " + %zu > %zu)",
-                   field->name,
-                   field->offset,
-                   TCPI_FIELD_TYPE_SIZE(field->tcpi_type),
-                   tcpi_size);
-          continue;
+          ERROR ("tcpconns plugin: conn_handle_tcpi: "
+                 "Field %s not in reported tcp_info "
+                 "(%" PRIu32 " + %zu > %zu)",
+                 field->name,
+                 field->offset,
+                 TCPI_FIELD_TYPE_SIZE(field->tcpi_type),
+                 tcpi_size);
+          ok = false;
+          break;
         }
         value_bytes = (unsigned char *)tcpi + field->offset;
         switch(field->tcpi_type) {
@@ -764,9 +772,12 @@ static void conn_handle_tcpi(
             break;
         }
     }
-    vl->values_len = value_index;
-
-    value_list_batch_release(batch);
+    if (ok) {
+      vl->values_len = value_index;
+      value_list_batch_release(batch);
+    } else {
+      value_list_batch_abort(batch);
+    }
 } /* conn_handle_tcpi */
 
 /* Returns tcp_info in an rtattr in h. Returns NULL if all rtattr's scanned
