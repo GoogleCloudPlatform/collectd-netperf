@@ -5,8 +5,10 @@
 # Usage: make_tcpconns_tcp_info /usr/include/linux/tcp.h
 
 import logging
+import os
 import re
 import sys
+import time
 
 class TcpHProcessor(object):
   """Processes lines of a tcp.h file."""
@@ -83,7 +85,8 @@ class TcpHProcessor(object):
         # Round offset up to multiple of size
         self.offset = ((self.offset + c_size - 1) // c_size) * c_size
         if ds_type != 'SKIP':
-          print '# %s\t%s\t%s:%d' % (name, ds_type, c_type, self.offset)
+          print '# TCPInfoField "%-30s  %-10s   %s:%d"' % (
+              name, ds_type, c_type, self.offset)
         self.offset += c_size
       return
     elif tp == 'STRUCT_END':
@@ -94,8 +97,20 @@ class TcpHProcessor(object):
       logging.error('%d: [I] Bad parsed type %s', self.lineno, tp)
       return
 
+filename = sys.argv[1]
+print '''# Sample configuration lines for TCPConns plugin
+
+# Generated:
+#   source file %s
+#   dated       %s
+#   on host     %s
+#
+# Uncomment relevant lines and
+# incorporate into the TCPConns plugin configuration.
+''' % (filename, os.uname()[1], time.ctime(os.stat(filename).st_mtime))
+
 try:
-  input = open(sys.argv[1])
+  input = open(filename)
   processor = TcpHProcessor()
   for line in input:
     processor.AddLine(line)
