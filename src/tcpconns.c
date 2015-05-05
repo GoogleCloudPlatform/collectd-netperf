@@ -61,6 +61,9 @@
 #include "common.h"
 #include "plugin.h"
 
+#include <stdlib.h>
+#include <string.h>
+
 #if defined(__OpenBSD__) || defined(__NetBSD__)
 #undef HAVE_SYSCTLBYNAME /* force HAVE_LIBKVM_NLIST path */
 #endif
@@ -163,15 +166,9 @@ struct tcpi_field_selector {
   /* TODO(arielshaqed): States in which to record the field? */
 };
 
-/* TODO(arielshaqed): Read this from a configuration file */
-static struct tcpi_field_selector tcpi_fields_to_report[] = {
-  {"perf_smoothed_rtt", DS_TYPE_GAUGE, UINT32,
-   offsetof(struct tcp_info, tcpi_rtt)},
-  {"perf_retransmits", DS_TYPE_GAUGE, UINT32,
-   offsetof(struct tcp_info, tcpi_retrans)},
-};
-static const int num_tcpi_fields_to_report =
-    sizeof(tcpi_fields_to_report) / sizeof(tcpi_fields_to_report[0]);
+static struct tcpi_field_selector *tcpi_fields_to_report = NULL;
+static size_t num_tcpi_fields_to_report = 0;
+static size_t tcpi_fields_to_report_size = 0;
 #endif
 
 static const char *tcp_state[] =
@@ -305,6 +302,7 @@ static const char *config_keys[] =
   "ReportByPorts",
   "ReportByConnections",
   "ConnectionsAgeLimitSecs",
+  "TCPInfoField",
 };
 static int config_keys_num = STATIC_ARRAY_SIZE (config_keys);
 
@@ -316,8 +314,102 @@ static int connections_age_limit_msecs = -1;
 static port_entry_t *port_list_head = NULL;
 static uint32_t count_total[TCP_STATE_MAX + 1];
 
+enum bool {false, true};
+
 #if KERNEL_LINUX
 #if HAVE_STRUCT_LINUX_INET_DIAG_REQ
+static enum bool parse_ds_type(const char *str, int *ds_type) {
+#define STR_CASE(name) do {                               \
+      if (strcasecmp(str, #name) == 0) {                  \
+        *ds_type = DS_TYPE_ ## name;                      \
+        return true;                                      \
+      }                                                   \
+  } while (0)
+
+  STR_CASE(COUNTER);
+  STR_CASE(GAUGE);
+  STR_CASE(DERIVE);
+  STR_CASE(ABSOLUTE);
+  return false;
+#undef STR_CASE
+}
+
+static enum bool parse_c_type(const char *str, enum tcpi_field_type *c_type) {
+#define STR_CASE(name) do {                               \
+      if (strcasecmp(str, #name) == 0) {                  \
+        *c_type = name;                                   \
+        return true;                                      \
+      }                                                   \
+  } while (0)
+
+  STR_CASE(UINT32);
+  STR_CASE(UINT64);
+  return false;
+#undef STR_CASE
+}
+
+static enum bool parse_tcpinfo_field_selector(
+    const char *selector_orig, struct tcpi_field_selector *field) {
+  /* Parse a field selector that looks like this:
+        NAME      DS_TYPE     C_TYPE:OFFSET
+        rtt       GAUGE       uint32:64 */
+  char *parse_ptr = NULL;
+  char *selector = strdup(selector_orig);
+  char *token;
+  const char *c_type_string;
+  const char *offset_string;
+  enum bool rc = false;
+  if (!(token = strtok_r(selector, " \t\n,", &parse_ptr))) {
+    ERROR ("Field selector \"%s\" missing NAME", selector_orig);
+    goto exit;
+  }
+  field->name = strdup(token);
+  if (!(token = strtok_r(NULL, " \t\n,", &parse_ptr))) {
+    ERROR ("Field selector \"%s\" missing DS_TYPE", selector_orig);
+    goto exit;
+  }
+  if (!parse_ds_type(token, &field->ds_type)) {
+    ERROR ("Bad DS_TYPE \"%s\" in field selector \"%s\"", token, selector_orig);
+    goto exit;
+  }
+  if (!(token = strtok_r(NULL, " \t\n,", &parse_ptr))) {
+    ERROR ("Field selector \"%s\" missing C_TYPE:OFFSET", selector_orig);
+    goto exit;
+  }
+  c_type_string = token;
+  if (!(token = strchr(token, ':'))) {
+    ERROR ("Missing ':' delimiter in C_TYPE:OFFSET \"%s\" "
+           "in field selector \"%s\"",
+           c_type_string, selector_orig);
+    goto exit;
+  }
+  *token = '\0';
+  offset_string = token+1;
+  if (!parse_c_type(c_type_string, &field->tcpi_type)) {
+    ERROR ("Bad C_TYPE \"%s\" in field selector \"%s\"",
+           c_type_string, selector_orig);
+    goto exit;
+  }
+  errno = 0;
+  field->offset = strtoul(offset_string, &token, 0);
+  if (errno) {
+    char err[256];
+    ERROR ("Bad offset \"%s\" in field selector \"%s\": %s",
+           offset_string, selector_orig, sstrerror(errno, err, sizeof(err)));
+    goto exit;
+  }
+  if (*token != '\0') {
+    ERROR ("Offset \"%s\" in field selector \"%s\" contains trailing garbage",
+           offset_string, selector_orig);
+    goto exit;
+  }
+  rc = true;
+
+exit:
+  free(selector);
+  return rc;
+}
+
 /* This depends on linux inet_diag_req because if this structure is missing,
  * sequence_number is useless and we get a compilation warning.
  */
@@ -811,7 +903,7 @@ static int conn_read_netlink (void)
       }
 
       r = NLMSG_DATA(h);
-      {
+      do {
         /* We access tcpi by configurable offset; must check each access via
          * tcpi before use! */
 	struct tcp_info *tcpi;
@@ -821,6 +913,8 @@ static int conn_read_netlink (void)
 	unsigned short dport = ntohs(r->id.idiag_dport);
 
         tcpi = get_tcp_info(h, &tcpi_size);
+        if (!tcpi)
+          break;
 
 	/* This code does not (need to) distinguish between IPv4 and IPv6. */
         if (report_by_ports)
@@ -839,7 +933,7 @@ static int conn_read_netlink (void)
                 batch, r->idiag_state, src, sport, dst, dport, tcpi, tcpi_size);
           }
 	}
-      }
+      } while (0);
 
       h = NLMSG_NEXT(h, status);
     } /* while (NLMSG_OK) */
@@ -997,9 +1091,34 @@ static int conn_config (const char *key, const char *value)
   else if (strcasecmp (key, "ConnectionsAgeLimitSecs") == 0) {
     connections_age_limit_msecs = atof(value) * 1000;
   }
+  else if (strcasecmp (key, "TCPInfoField") == 0) {
+    struct tcpi_field_selector field;
+    if (!parse_tcpinfo_field_selector(value, &field)) {
+      ERROR ("tcpconns plugin: Failed to parse field selector \"%s\"", value);
+      return (1);
+    }
+    if (tcpi_fields_to_report_size <= num_tcpi_fields_to_report) {
+      tcpi_fields_to_report_size = tcpi_fields_to_report_size * 2;
+      if (tcpi_fields_to_report_size < 3)
+        tcpi_fields_to_report_size = 3;
+      if (!(tcpi_fields_to_report = realloc(
+              tcpi_fields_to_report,
+              tcpi_fields_to_report_size * sizeof(*tcpi_fields_to_report)))) {
+        ERROR ("tcpconns plugin: Out of memory for %zu fields (field %s)",
+               tcpi_fields_to_report_size, value);
+        return (1);
+      }
+    }
+    tcpi_fields_to_report[num_tcpi_fields_to_report++] = field;
+  }
   else
   {
     return (-1);
+  }
+
+  if (num_tcpi_fields_to_report > 0 && !report_by_connections) {
+    WARNING ("Requested reporting of %zu tcp_info fields "
+             "but not reporting connections", num_tcpi_fields_to_report);
   }
 
   return (0);
