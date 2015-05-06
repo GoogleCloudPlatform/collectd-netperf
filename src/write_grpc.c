@@ -20,6 +20,8 @@
 #include "nanopb/pb_encode.h"
 #include "grpc_data.pb.h"
 
+#include "safe_iop.h"
+
 #include "collectd.h"
 #include "common.h"
 #include "plugin.h"
@@ -312,15 +314,20 @@ static void log_gpr_to_collectd(gpr_log_func_args *args) {
 static bool encoded_stats_ostream_callback(
     pb_ostream_t *stream, const uint8_t* buf, size_t count) {
   encoded_stats_pb *encoded = (encoded_stats_pb *) stream->state;
+  size_t new_buf_len;
 
-  if (encoded->buf_len + count > encoded->buf_size) {
+  if (!safe_add(&new_buf_len, encoded->buf_len, count)) {
+    ERROR("[I] new length %zu + %zu overflows", encoded->buf_len, count);
+    return false;
+  }
+  if (new_buf_len > encoded->buf_size) {
     ERROR("Buffer length %zu exceeded; write %zu; offset %zu",
           encoded->buf_size, count, encoded->buf_len);
     return false;
   }
 
   memcpy(encoded->buf + encoded->buf_len, buf, count);
-  encoded->buf_len += count;
+  encoded->buf_len = new_buf_len;
 
   return true;
 }
@@ -407,13 +414,13 @@ static int process_cq(grpc_callback *cb, int do_sleep) {
   return 1;
 }
 
-/* Returns sum of buffer lengths */
-static size_t get_sum_lengths(encoded_stats_pb *start, size_t num) {
+/* Accumulates buffer lengths into sum. Returns false on overflow */
+static bool add_lengths(size_t *sum, encoded_stats_pb *start, size_t num) {
   size_t i;
-  size_t ret = 0;
   for (i = 0; i < num; i++)
-    ret += start[i].buf_len;
-  return ret;
+    if (!safe_add(sum, *sum, start[i].buf_len))
+      return false;
+  return true;
 }
 
 /* Fills in ops to perform a simple call and returns number of ops. Returns
@@ -488,6 +495,7 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
   grpc_call *call = NULL;
   grpc_event *ev = NULL;
   grpc_call_error grpc_rc;
+  size_t buffer_alloc_size;
   size_t i;
   size_t encoded_stats_end;
   int rc = 0;
@@ -514,11 +522,18 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
 
   /* Over-estimate total length: each encoded Stats message will need a
    * prepended length (2 bytes are enough), plus a short header for framing
-   * AggregatedStats. */
-  slice = gpr_slice_malloc(
-      get_sum_lengths(&cb->encoded_stats[0], encoded_stats_end) +
-      encoded_stats_end * 2 +
-      128);
+   * AggregatedStats. If we under-estimate, encoding will fail (safely). */
+  if (!safe_add3(&buffer_alloc_size,
+                 encoded_stats_end, encoded_stats_end, (size_t)128) ||
+      !add_lengths(&buffer_alloc_size,
+                   &cb->encoded_stats[0], encoded_stats_end)) {
+    ERROR("Buffer allocation size overflowed");
+    rc = -1;
+    goto exit;
+  }
+  /* gpr_slice_malloc aborts if malloc() fails */
+  slice = gpr_slice_malloc(buffer_alloc_size);
+
   stream_state.slice = slice;
   stream_state.offset = 0;
   stream.callback = slice_and_offset_ostream_callback;
@@ -684,7 +699,12 @@ static int write_data(const data_set_t *ds, const value_list_t *vl,
     goto exit;
   }
 
-  encoded_stats.buf = malloc(encoded_stats.buf_len);
+  if (!(encoded_stats.buf = gpr_malloc(encoded_stats.buf_len))) {
+    ERROR("malloc failed for encoded stats buf (size %zu)",
+          encoded_stats.buf_len);
+    rc = -1;
+    goto exit;
+  }
   memcpy(encoded_stats.buf, buf, encoded_stats.buf_len);
 
   cb->encoded_stats[cb->next_index++] = encoded_stats;
@@ -810,7 +830,7 @@ static int load_config(oconfig_item_t *ci)
 
   if (ci == NULL) goto exit;
 
-  if ((cb = malloc(sizeof(*cb))) == NULL) {
+  if ((cb = gpr_malloc(sizeof(*cb))) == NULL) {
     ERROR("write_grpc plugin: failed to allocate memory for callback data.");
     goto exit;
   }
