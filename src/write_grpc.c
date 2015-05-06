@@ -36,7 +36,8 @@
 /*
  * Configuration and workspace
  */
-#define MAX_REPORTS_PER_SEND    256
+#define DEFAULT_FLUSH_INTERVAL_SECONDS  10.0
+#define DEFAULT_STATS_BATCH_LENGTH      4096
 
 typedef struct {
   cdtime_t timestamp;
@@ -63,7 +64,8 @@ typedef struct grpc_callback {
 
   /* Buffers holding encoded Stats messages. */
   size_t next_index;
-  encoded_stats_pb encoded_stats[MAX_REPORTS_PER_SEND];
+  encoded_stats_pb *encoded_stats;
+  size_t encoded_stats_length;
 } grpc_callback;
 
 static grpc_callback *callbacks = NULL, *last_callback = NULL;
@@ -80,6 +82,7 @@ static void destroy_cb(void *arg)
   if (cb->cq) grpc_completion_queue_destroy(cb->cq);
   for (i = 0; i < cb->next_index; i++)
     free(cb->encoded_stats[i].buf);
+  free(cb->encoded_stats);
   free(cb);
 }
 
@@ -705,11 +708,11 @@ static int write_data(const data_set_t *ds, const value_list_t *vl,
   memcpy(encoded_stats.buf, buf, encoded_stats.buf_len);
 
   cb->encoded_stats[cb->next_index++] = encoded_stats;
-  if (cb->next_index >= sizeof(cb->encoded_stats)/sizeof(cb->encoded_stats[0]))
+  if (cb->next_index >= cb->encoded_stats_length)
     do_flush_nolock(cb, 0);
 
   DEBUG("write_grpc write_data: %zu/%zu slices",
-        cb->next_index, sizeof(cb->encoded_stats)/sizeof(cb->encoded_stats[0]));
+        cb->next_index, encoded_stats);
 
 exit:
   gpr_mu_unlock(&cb->mutex);
@@ -841,9 +844,10 @@ static int load_config(oconfig_item_t *ci)
   cb->write_counter = 0;
   cb->write_accepted_counter = 0;
   cb->deadline = 20.0;
-  cb->data_flush_interval = 2.5;
+  cb->data_flush_interval = DEFAULT_FLUSH_INTERVAL_SECONDS;
   cb->flush_thread_started = false;
   cb->next_index = 0;
+  cb->encoded_stats_length = DEFAULT_STATS_BATCH_LENGTH;
 
   for (i = 0; i < ci->children_num; i++) {
     oconfig_item_t *child = &ci->children[i];
@@ -892,6 +896,15 @@ static int load_config(oconfig_item_t *ci)
         goto exit;
       }
     }
+    else if (STR_EQ(child->key, "MaxStatsPerReport")) {
+      int encoded_stats_length = 0;
+      if (cf_util_get_int(child, &encoded_stats_length) ||
+          encoded_stats_length <= 0) {
+        ERROR("Bad MaxStatsPerReport value");
+        goto exit;
+      }
+      cb->encoded_stats_length = encoded_stats_length;
+    }
 
 #undef  STR_EQ
   }
@@ -926,6 +939,14 @@ static int load_config(oconfig_item_t *ci)
           root_pem_filename)))
     /* Error already logged */
     goto exit;
+
+  cb->encoded_stats = calloc(
+      cb->encoded_stats_length, sizeof(*cb->encoded_stats));
+  if (cb->encoded_stats == NULL) {
+    ERROR("Failed to allocate cb->encoded_stats (length=%zu)",
+          cb->encoded_stats_length);
+    goto exit;
+  }
 
   /* Success! */
   rc = 0;
