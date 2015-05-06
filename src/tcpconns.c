@@ -1152,14 +1152,14 @@ static int conn_init (void)
     port_collect_listening = 1;
 
 #ifdef HAVE_LINUX_INET_DIAG_H
-  {  /* Define what dataset we shall be reporting */
+  if (report_by_connections) {  /* Define what dataset we shall be reporting */
     data_set_t data_set;
     size_t i;
     if (num_tcpi_fields_to_report == 0 && report_by_connections) {
-        ERROR("TCPConns plugin: "
-              "ReportByConnections requested, "
-              "but no TCPInfoField lines configured.");
-        return 1;
+      ERROR ("TCPConns plugin: "
+             "ReportByConnections requested, "
+             "but no TCPInfoField lines configured.");
+      return 1;
     }
     strncpy(data_set.type, "tcp_connections_perf", sizeof(data_set.type));
     data_set.ds_num = num_tcpi_fields_to_report;
@@ -1171,8 +1171,12 @@ static int conn_init (void)
       data_set.ds[i].min = NAN;
       data_set.ds[i].max = NAN;
     }
-    plugin_register_data_set(&data_set);
-    sfree(data_set.ds);
+    if (plugin_unregister_data_set ("tcp_connections_perf") < 0) {
+      WARNING ("TCPConns plugin: "
+               "Expected to find dataset \"tcp_connections_perf\" in types.db");
+    }
+    plugin_register_data_set (&data_set);
+    sfree (data_set.ds);
   }
 #endif /* HAVE_LINUX_INET_DIAG_H */
 
