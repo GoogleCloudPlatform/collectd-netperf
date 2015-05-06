@@ -53,6 +53,7 @@ src/liboconfig/scanner.c
 
 # protobuf stuff:
 src/*.pb-c.[ch]
+src/*.pb.[ch]
 
 # make dist stuff:
 /collectd-*.tar.gz
@@ -88,3 +89,9 @@ src/tests/mock/.dirstamp
 src/daemon/.deps/
 src/daemon/.dirstamp
 src/daemon/collectd
+
+# For unpacking new versions of nanopb
+src/nanopb/examples
+# nanopb dependencies
+src/nanopb/.deps
+src/nanopb/.dirstamp

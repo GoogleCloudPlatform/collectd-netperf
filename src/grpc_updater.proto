@@ -1,0 +1,28 @@
+// TODO(arielshaqed): LICENSE! Change name?
+syntax = "proto2";
+
+package google.internal.cloudlatencytest.v2;
+
+import "google/api/annotations.proto";
+
+// Import the resource messages that the API uses.
+import "google/internal/cloudlatencytest/v2/grpc_data.proto";
+
+option java_package = "com.google.internal.cloudlatencytest.v2";
+
+// The service to report latency data.
+service StatReporterService {
+  // RPC to update the new TCP stats.
+  rpc UpdateStats(Stats) returns (StatsReply) {
+    option (google.api.http) = {
+      post: "/v2/statscollection/updatestats" body: "*" };
+    option end_user_creds_requested = true;
+  }
+
+  // RPC to update the new TCP stats.
+  rpc UpdateAggregatedStats(AggregatedStats) returns (AggregatedStatsReply) {
+    option (google.api.http) = {
+      post: "/v2/statscollection/updateaggregatedstats" body: "*" };
+    option end_user_creds_requested = true;
+  }
+}

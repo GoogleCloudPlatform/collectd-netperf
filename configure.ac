@@ -59,6 +59,9 @@ then
 fi
 AM_CONDITIONAL(HAVE_PROTOC_C, test "x$have_protoc_c" = "xyes")
 
+AC_CHECK_PROG([have_protoc], [protoc], [yes], [no])
+AM_CONDITIONAL(HAVE_PROTOC, test "x$have_protoc" = "xyes")
+
 AC_MSG_CHECKING([for kernel type ($host_os)])
 case $host_os in
 	*linux*)
@@ -4573,6 +4576,63 @@ fi
 AM_CONDITIONAL(BUILD_WITH_LIBYAJL, test "x$with_libyajl" = "xyes")
 # }}}
 
+# --with-grpc {{{
+with_grpc_cppflags=""
+with_grpc_ldflags=""
+AC_ARG_WITH(grpc, [AS_HELP_STRING([--with-grpc@<:@=PREFIX@:>@], [Path to GRPC.])],
+[
+	if test "x$withval" != "xno" && test "x$withval" != "xyes"
+	then
+		with_grpc_cppflags="-I$withval/include"
+		with_grpc_ldflags="-L$withval/lib"
+		with_grpc="yes"
+	else
+		with_grpc="$withval"
+	fi
+],
+[
+	with_grpc="yes"
+])
+if test "x$with_grpc" = "xyes"
+then
+	SAVE_CPPFLAGS="$CPPFLAGS"
+	CPPFLAGS="$CPPFLAGS $with_grpc_cppflags"
+
+	AC_CHECK_HEADERS(grpc/grpc.h, [with_grpc="yes"], [with_grpc="no (grpc/grpc.h not found)"])
+	AC_CHECK_HEADERS(grpc/byte_buffer.h)
+	AC_CHECK_HEADERS(grpc/byte_buffer_reader.h)
+	AC_CHECK_HEADERS(grpc/grpc_security.h)
+	AC_CHECK_HEADERS(grpc/support/alloc.h)
+
+	CPPFLAGS="$SAVE_CPPFLAGS"
+fi
+if test "x$with_grpc" = "xyes"
+then
+	SAVE_CPPFLAGS="$CPPFLAGS"
+	SAVE_LDFLAGS="$LDFLAGS"
+	CPPFLAGS="$CPPFLAGS $with_grpc_cppflags"
+	LDFLAGS="$LDFLAGS $with_grpc_ldflags"
+
+	AC_CHECK_LIB(grpc, grpc_channel_create_call, [with_grpc="yes"], [with_grpc="no (Symbol 'grpc_channel_create_call' not found)"], -lgpr -lpthread -ldl)
+	AC_CHECK_LIB(grpc, grpc_service_account_credentials_create, [with_grpc="yes"], [with_grpc="no (Crypto symbol 'grpc_service_account_credentials_create' not found)"], -lgpr -lpthread -ldl)
+
+	CPPFLAGS="$SAVE_CPPFLAGS"
+	LDFLAGS="$SAVE_LDFLAGS"
+fi
+if test "x$with_grpc" = "xyes"
+then
+	BUILD_WITH_GRPC_CPPFLAGS="$with_grpc_cppflags"
+	BUILD_WITH_GRPC_LDFLAGS="$with_grpc_ldflags"
+	BUILD_WITH_GRPC_LIBS="-lgrpc -lgpr -lpthread"
+	AC_SUBST(BUILD_WITH_GRPC_CPPFLAGS)
+	AC_SUBST(BUILD_WITH_GRPC_LDFLAGS)
+	AC_SUBST(BUILD_WITH_GRPC_LIBS)
+	AC_DEFINE(HAVE_GRPC, 1, [Define if grpc is present and usable.])
+fi
+AM_CONDITIONAL(BUILD_WITH_GRPC, test "x$with_grpc" = "xyes")
+AC_SUBST(BUILD_WITH_GRPC)
+# }}}
+
 # --with-mic {{{
 with_mic_cflags="-I/opt/intel/mic/sysmgmt/sdk/include"
 with_mic_ldpath="-L/opt/intel/mic/sysmgmt/sdk/lib/Linux"
@@ -5591,6 +5651,7 @@ AC_PLUGIN([vmem],        [$plugin_vmem],       [Virtual memory statistics])
 AC_PLUGIN([vserver],     [$plugin_vserver],    [Linux VServer statistics])
 AC_PLUGIN([wireless],    [$plugin_wireless],   [Wireless statistics])
 AC_PLUGIN([write_graphite], [yes],             [Graphite / Carbon output plugin])
+AC_PLUGIN([write_grpc],  [$with_grpc],         [gRPC output plugin])
 AC_PLUGIN([write_http],  [$with_libcurl],      [HTTP output plugin])
 AC_PLUGIN([write_kafka],  [$with_librdkafka],  [Kafka output plugin])
 AC_PLUGIN([write_log], [yes],                  [Log output plugin])
@@ -5783,6 +5844,7 @@ cat <<EOF;
 
 Configuration:
   Libraries:
+    grpc  . . . . . . . . $with_grpc
     intel mic . . . . . . $with_mic
     libaquaero5 . . . . . $with_libaquaero5
     libatasmart . . . . . $with_libatasmart
@@ -5966,6 +6028,7 @@ Configuration:
     vserver . . . . . . . $enable_vserver
     wireless  . . . . . . $enable_wireless
     write_graphite  . . . $enable_write_graphite
+    write_grpc  . . . . . $enable_write_grpc
     write_http  . . . . . $enable_write_http
     write_kafka . . . . . $enable_write_kafka
     write_log . . . . . . $enable_write_log

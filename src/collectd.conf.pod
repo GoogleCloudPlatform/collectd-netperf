@@ -6491,11 +6491,32 @@ Default: B<0>
 
 =head2 Plugin C<tcpconns>
 
-The C<tcpconns plugin> counts the number of currently established TCP
-connections based on the local port and/or the remote port. Since there may be
-a lot of connections the default if to count all connections with a local port,
-for which a listening socket is opened. You can use the following options to
-fine-tune the ports you are interested in:
+The C<tcpconns> plugin summarizes TCP connections on the machine by counting
+the number of currently established TCP connections based on the local port
+and/or the remote port. On Linux with the C<tcp_diag> kernel module, it can
+also report fine-grained statistics -- the TCP stack smoothed round-trip-time
+estimate -- for each connection.
+
+You can select which mode(s) to use:
+
+=over 4
+
+=item B<ReportByPorts> I<true>|I<false>
+
+If set to I<true> (the default), summarize the number of TCP connections by
+port.
+
+=item B<ReportByConnections> I<true>|I<false>
+
+If set to I<true> (default I<false>), report fine-grained smoothed RTT
+statistic per connection.
+
+=back
+
+B<When summarizing>, since there may be a lot of connections the default if to
+count all connections with a local port, for which a listening socket is
+opened. You can use the following options to fine-tune the ports you are
+interested in:
 
 =over 4
 
@@ -6529,6 +6550,19 @@ port in numeric form.
 
 If this option is set to I<true> a summary of statistics from all connections
 are collectd. This option defaults to I<false>.
+
+=back
+
+B<When reporting fine-grained statistics>, you can tune for which connections
+to report statistics:
+
+=over 4
+
+=item B<ConnectionsAgeLimitSecs> I<seconds>
+
+If positive, only report connections that were active in the past I<seconds>.
+Otherwise the last RTT value discovered by the TCP stack for every connection
+will continue to be reported.
 
 =back
 
@@ -7017,6 +7051,70 @@ identifier. If set to B<false> (the default), this is only done when there is
 more than one DS.
 
 =back
+
+=head2 Plugin C<write_grpc>
+
+The C<write_grpc> plugin writes data to a suitable backend using the gRPC
+protocol and a generic protocol buffer.  It allows high performance
+reporting, and supports client authentication using either service accounts
+or Google Compute Engine (GCE) per-instance default tokens.
+
+=over 4
+
+=item If running on a GCE instance with the appropriate default scope
+      (https://www.googleapis.com/auth/monitoring.readonly), set
+      C<UseInstanceCredentials>.
+
+=item Otherwise, acquire service account credentials in a JSON file, and set
+      C<ServiceAccountJsonFile> to the pathname of that file.
+
+=back
+
+Synopsis:
+
+ <Plugin write_grpc>
+   Host "cloudlatencytest.googleapis.com"
+   UseInstanceCredentials true
+   # OR: ServiceAccountJsonFile "/path/to/service-account.json"
+   RootPEMFile "/usr/share/ca-certificates/google/RootsForGoogleSSLCAs.crt"
+             # (For connecting to Google from Ubuntu machines)
+ </Plugin>
+
+=over 4
+
+=item B<Host> I<fqdn>
+
+Connect to the server at I<fqdn>.  Also used in server certificate
+validation.
+
+=item B<UseInstanceCredentials> B<true>|B<false>
+
+If true and running on a Google Compute Engine instance, acquire client
+authentication tokens from the metadata server.  The instance must have been
+created with the required B<Scopes> in its default scope.
+
+=item B<ServiceAccountJsonFile> I<filename>
+
+Use JSON-format service account credentials stored in I<filename> to acquire
+client authentication tokens.
+
+=item B<Scopes> I<urn>
+
+Request authentication tokens for this I<urn>.  This must match the required
+scope for contacting the B<Host> server.  Default
+C<https://www.googleapis.com/auth/monitoring.readonly>.
+
+=item B<RootPEMFile> I<filename>
+
+Filename containing PEM of trusted root CAs.  Use a trusted source for this,
+e.g. your distribution or C<http://pki.google.com/roots.pem>.
+
+=item B<Deadline> I<seconds>
+
+Wait up to I<seconds> for gRPC operations to complete.  Default 20.
+
+=back
+
 
 =head2 Plugin C<write_tsdb>
 

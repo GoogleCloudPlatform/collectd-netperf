@@ -60,6 +60,7 @@
 #include "collectd.h"
 #include "common.h"
 #include "plugin.h"
+#include "safe_iop.h"
 
 #if defined(__OpenBSD__) || defined(__NetBSD__)
 #undef HAVE_SYSCTLBYNAME /* force HAVE_LIBKVM_NLIST path */
@@ -278,6 +279,7 @@ static const char *config_keys[] =
   "AllPortsSummary",
   "ReportByPorts",
   "ReportByConnections",
+  "ConnectionsAgeLimitSecs",
 };
 static int config_keys_num = STATIC_ARRAY_SIZE (config_keys);
 
@@ -285,6 +287,7 @@ static int port_collect_listening = 0;
 static int port_collect_total = 0;
 static int report_by_connections = 0;
 static int report_by_ports = 1;
+static int connections_age_limit_msecs = -1;
 static port_entry_t *port_list_head = NULL;
 static uint32_t count_total[TCP_STATE_MAX + 1];
 
@@ -492,6 +495,8 @@ static int conn_handle_ports (uint16_t port_local, uint16_t port_remote, uint8_t
 } /* int conn_handle_ports */
 
 #if KERNEL_LINUX
+
+#if HAVE_STRUCT_LINUX_INET_DIAG_REQ
 /* Batched reporting of value_list_t  */
 typedef struct value_list_batch_s {
     size_t size;
@@ -501,13 +506,26 @@ typedef struct value_list_batch_s {
 
 static value_list_batch_t *value_list_batch_create(size_t size)
 {
-    value_list_batch_t *ret =
-        malloc(sizeof(value_list_batch_t) + (size - 1) * sizeof(value_list_t));
+    value_list_batch_t *ret;
+    size_t ret_size;
     size_t i;
     const value_list_t vl_init = VALUE_LIST_INIT;
-    if (size < 4) {
+    if (size < 4)
+    {
         ERROR("Buffer size %zu < 4; using 4", size);
         size = 4;
+    }
+    if (!safe_mul(&ret_size, size-1, sizeof(value_list_t)) ||
+        !safe_add(&ret_size, ret_size, sizeof(value_list_batch_t)))
+    {
+        ERROR("Buffer size overflow for %zu + %zu * %zu",
+              sizeof(value_list_batch_t), size-1, sizeof(value_list_t));
+        return NULL;
+    }
+    if (!(ret = malloc(ret_size))) {
+        ERROR("Failed to allocate %zu byte buffer for value_list_batch",
+              ret_size);
+        return NULL;
     }
     ret->size = size;
     for (i = 0; i < size; i++)
@@ -559,7 +577,17 @@ static void value_list_batch_release(value_list_batch_t *batch)
   value_list_batch_maybe_flush(batch);
 }
 
-#if HAVE_STRUCT_LINUX_INET_DIAG_REQ
+/* Return 1 if tcpi should be reported */
+static int filter_tcpi(const struct tcp_info* tcpi)
+{
+  /* Skip last ACK sent, it's documented "Not remembered, sorry." */
+  return connections_age_limit_msecs < 0 ||
+      tcpi->tcpi_last_data_sent < connections_age_limit_msecs ||
+        /* tcpi->tcpi_last_ack_sent < connections_age_limit_msecs || */
+      tcpi->tcpi_last_data_recv < connections_age_limit_msecs ||
+      tcpi->tcpi_last_ack_recv < connections_age_limit_msecs;
+}
+
 /* Update entries for specified connections.  May call conn_buffer_flush. */
 static void conn_handle_tcpi(
     value_list_batch_t *batch, uint8_t state,
@@ -618,6 +646,12 @@ static int conn_read_netlink (void)
   struct inet_diag_msg *r;
   value_list_batch_t *batch = value_list_batch_create(2048);
   char buf[32768];
+
+  if (!batch)
+  {
+    /* Error already logged */
+    return (-1);
+  }
 
   /* If this fails, it's likely a permission problem. We'll fall back to
    * reading this information from files below. */
@@ -730,7 +764,7 @@ static int conn_read_netlink (void)
           conn_handle_ports (sport, dport, state);
 
         if (report_by_connections) {
-          if (r->idiag_state != TCP_STATE_LISTEN && tcpi) {
+          if (r->idiag_state != TCP_STATE_LISTEN && tcpi && filter_tcpi(tcpi)) {
 	    char src[INET6_ADDRSTRLEN];
 	    char dst[INET6_ADDRSTRLEN];
 	    if (!inet_ntop(r->idiag_family, r->id.idiag_src, src, sizeof(src)))
@@ -751,9 +785,10 @@ static int conn_read_netlink (void)
   close(fd);
   value_list_batch_free(batch);
   return (0);
+#else
+  return (1);
+#endif  /* HAVE_STRUCT_LINUX_INET_DIAG_REQ */
 } /* int conn_read_netlink */
-
-#endif  /* KERNEL_LINUX */
 
 static int conn_handle_line (char *buffer)
 {
@@ -894,6 +929,9 @@ static int conn_config (const char *key, const char *value)
       report_by_ports = 1;
     else
       report_by_ports = 0;
+  }
+  else if (strcasecmp (key, "ConnectionsAgeLimitSecs") == 0) {
+    connections_age_limit_msecs = atof(value) * 1000;
   }
   else
   {
