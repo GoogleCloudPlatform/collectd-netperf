@@ -58,6 +58,7 @@ typedef struct grpc_callback {
   size_t write_accepted_counter;
   double deadline;
   double data_flush_interval;
+  double last_flush_start_time;
 
   pthread_t flush_thread_id;
   bool flush_thread_started;
@@ -500,6 +501,8 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
   size_t encoded_stats_end;
   int rc = 0;
 
+  cb->last_flush_start_time = CDTIME_T_TO_DOUBLE(cdtime());
+
   if (cb->next_index == 0)
     return 0;
 
@@ -626,11 +629,22 @@ exit:
 static void *flush_data_thread(void *arg)
 {
   grpc_callback *cb = arg;
+  useconds_t usec_to_sleep = cb->data_flush_interval * 1e6;
+  double time_from_last_flush;
 
   while (1) {
-    usleep(cb->data_flush_interval * 1e6);
+    usleep(usec_to_sleep);
     gpr_mu_lock(&cb->mutex);
-    do_flush_nolock(cb, 0);
+    time_from_last_flush =
+        CDTIME_T_TO_DOUBLE(cdtime()) - cb->last_flush_start_time;
+    if (time_from_last_flush < cb->data_flush_interval) {
+      /* Skip flush, too close to last flush */
+      usec_to_sleep = (cb->data_flush_interval - time_from_last_flush) * 1e6;
+    } else {
+      do_flush_nolock(cb, 0);
+      /* Set clock for full data flush interval */
+      usec_to_sleep = cb->data_flush_interval * 1e6;
+    }
     gpr_mu_unlock(&cb->mutex);
   }
 
@@ -847,7 +861,9 @@ static int load_config(oconfig_item_t *ci)
   cb->data_flush_interval = DEFAULT_FLUSH_INTERVAL_SECONDS;
   cb->flush_thread_started = false;
   cb->next_index = 0;
+  cb->encoded_stats = NULL;
   cb->encoded_stats_length = DEFAULT_STATS_BATCH_LENGTH;
+  cb->last_flush_start_time = (-1) * DEFAULT_FLUSH_INTERVAL_SECONDS;
 
   for (i = 0; i < ci->children_num; i++) {
     oconfig_item_t *child = &ci->children[i];
