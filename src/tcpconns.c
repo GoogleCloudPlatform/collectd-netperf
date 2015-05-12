@@ -745,6 +745,10 @@ static void conn_handle_tcpi(
         const struct tcpi_field_selector *field =
             &tcpi_fields_to_report[tcpi_field_index];
         unsigned char *value_bytes;
+        /* Code below does NOT support reading signed fields in tcp_info to
+         * most DS_TYPEs: assigning from a smaller-than-64-bit type to
+         * another smaller-than-64-bit type via a uint64_t is a recipe for
+         * sign-extension madness. */
         uint64_t value;
         if (field->offset + TCPI_FIELD_TYPE_SIZE(field->tcpi_type) >
             tcpi_size) {
