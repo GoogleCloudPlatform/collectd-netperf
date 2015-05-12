@@ -695,11 +695,23 @@ static void value_list_batch_release(value_list_batch_t *batch)
 /* Return 1 if tcpi should be reported */
 static int filter_tcpi(const struct tcp_info* tcpi, size_t tcpi_size)
 {
-  if (tcpi_size < sizeof(*tcpi)) {
-    /* Might not be safe to read fields (and certainly not a kernel we know
-     * about) -- skip */
-    return 0;
-  }
+  /* Returns 0 if tcpi_size is not large enough to contain field. */
+#define	NEED_FIELD(field, tcpi_size)                                    \
+  do {                                                                  \
+      if (offsetof(struct tcp_info, field) +                            \
+          sizeof(((struct tcp_info *)NULL)->field) >                    \
+          tcpi_size) {                                                  \
+        ERROR ("tcp_info size %zu too small to hold %s",                \
+               tcpi_size, #field);                                      \
+        return 0;                                                       \
+      }                                                                 \
+  } while(0)
+
+  NEED_FIELD(tcpi_last_data_sent, tcpi_size);
+  /* NEED_FIELD(tcpi_last_ack_sent, tcpi_size);*/
+  NEED_FIELD(tcpi_last_data_recv, tcpi_size);
+  NEED_FIELD(tcpi_last_ack_recv, tcpi_size);
+
   /* Skip last ACK sent, it's documented "Not remembered, sorry." */
   return connections_age_limit_msecs < 0 ||
       tcpi->tcpi_last_data_sent < connections_age_limit_msecs ||
