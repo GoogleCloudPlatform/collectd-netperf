@@ -1,0 +1,118 @@
+#!/usr/bin/env python
+
+# Generate a tcpconns_tcp_info.conf from tcp.h.
+#
+# Usage: make_tcpconns_tcp_info /usr/include/linux/tcp.h
+
+import logging
+import os
+import re
+import sys
+import time
+
+class TcpHProcessor(object):
+  """Processes lines of a tcp.h file."""
+
+  # Map indexing specified C type to fields DS_TYPE, NICE_C_TYPE, C_SIZE.
+  # DS_TYPE can also be "SKIP", to go past this field.
+  c_types = {
+      '__u8': ('GAUGE', 'uint8', 1),
+      '__u32': ('GAUGE', 'uint32', 4),
+      '__u64': ('ABSOLUTE', 'uint64', 8),
+      }
+
+  def __init__(self):
+    self.lineno = 0
+    self.offset = 0
+    self.struct_name = r'tcp_info'
+    self.field_prefix = 'tcpi_'
+    self.before_struct = True
+    self.after_struct = False
+
+  def _ParseLine(self, line):
+    """Parses line.  Returns (TYPE, EXTRAS).
+
+    TYPE is one of FAILED, BLANK, STRUCT_START, STRUCT_FIELD,
+    STRUCT_END.  EXTRAS depends on TYPE, and is:
+
+      None for FAILED or BLANK
+      struct_name for STRUCT_START
+      (c_type, stripped_name) for STRUCT_FIELD
+      None for STRUCT_END
+    """
+    # Strip comments. (Explanation of the regexp: Match "/*", then any
+    # sequence of non-*s, then maybe some *-separated sequences of
+    # non-*s where each * isn't followed by "/", then "*/".
+    #
+    # This doesn't work for multi-line comments, so we just junk every
+    # line starting "*".  That's good enough for a Linux header file.
+    line = re.sub(r'\/\*[^*]*(?:\*[^/][^*]*)*\*\/', '', line)
+    line = re.sub(r'^\s*\*.*$', '', line)
+
+    m = re.match('^\s*$', line)
+    if m: return ('BLANK', None)
+    m = re.match(r'^\s*struct\s+(\w+)\s*\{\s*$', line)
+    if m: return ('STRUCT_START', m.group(1))
+    m = re.match(r'^\s*(\w+)\s+(\w+)\s*\;\s*$', line)
+    if m:
+      name = re.sub(r'^' + re.escape(self.field_prefix), '', m.group(2))
+      return ('STRUCT_FIELD', (m.group(1), name))
+    m = re.match(r'\s*\}\s*\;\s*$', line)
+    if m: return ('STRUCT_END', None)
+    return ('FAILED', None)
+
+  def AddLine(self, line):
+    self.lineno += 1
+    tp, extras = self._ParseLine(line)
+    if tp == 'BLANK': return
+    elif tp == 'FAILED': return
+    elif tp == 'STRUCT_START':
+      if extras != self.struct_name:
+        logging.debug('%d: Skipping other struct %s', self.lineno, extras)
+        return
+      if not self.before_struct:
+        logging.error('%d: Already seen struct %s', self.lineno, extras)
+        return
+      self.before_struct = False
+      return
+    elif tp == 'STRUCT_FIELD':
+      if not self.before_struct and not self.after_struct:
+        c_type, name = extras
+        if c_type not in self.c_types:
+          logging.error('%d: Unknown C type %s', self.lineno, c_type)
+          sys.exit(1)
+        ds_type, c_type, c_size = self.c_types[c_type]
+        # Round offset up to multiple of size
+        self.offset = ((self.offset + c_size - 1) // c_size) * c_size
+        if ds_type != 'SKIP':
+          print '# TCPInfoField "%-30s  %-10s   %s:%d"' % (
+              name, ds_type, c_type, self.offset)
+        self.offset += c_size
+      return
+    elif tp == 'STRUCT_END':
+      if not self.before_struct:
+        self.after_struct = True
+      return
+    else:
+      logging.error('%d: [I] Bad parsed type %s', self.lineno, tp)
+      return
+
+filename = sys.argv[1]
+print '''# Sample configuration lines for TCPConns plugin
+
+# Generated:
+#   source file %s
+#   dated       %s
+#   on host     %s
+#
+# Uncomment relevant lines and
+# incorporate into the TCPConns plugin configuration.
+''' % (filename, os.uname()[1], time.ctime(os.stat(filename).st_mtime))
+
+try:
+  input = open(filename)
+  processor = TcpHProcessor()
+  for line in input:
+    processor.AddLine(line)
+except IOError:
+  logging.exception('Failed to open %s', sys.argv[1])
