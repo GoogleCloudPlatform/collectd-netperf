@@ -37,7 +37,7 @@
  * Configuration and workspace
  */
 #define DEFAULT_FLUSH_INTERVAL_SECONDS  10.0
-#define DEFAULT_STATS_BATCH_LENGTH      4096
+#define DEFAULT_MAX_STATS_NUM_IN_BATCH      4096
 
 typedef struct {
   cdtime_t timestamp;
@@ -66,7 +66,7 @@ typedef struct grpc_callback {
   /* Buffers holding encoded Stats messages. */
   size_t next_index;
   encoded_stats_pb *encoded_stats;
-  size_t encoded_stats_length;
+  size_t max_num_encoded_stats;
 } grpc_callback;
 
 static grpc_callback *callbacks = NULL, *last_callback = NULL;
@@ -722,7 +722,7 @@ static int write_data(const data_set_t *ds, const value_list_t *vl,
   memcpy(encoded_stats.buf, buf, encoded_stats.buf_len);
 
   cb->encoded_stats[cb->next_index++] = encoded_stats;
-  if (cb->next_index >= cb->encoded_stats_length)
+  if (cb->next_index >= cb->max_num_encoded_stats)
     do_flush_nolock(cb, 0);
 
   DEBUG("write_grpc write_data: %zu/%zu slices",
@@ -862,7 +862,7 @@ static int load_config(oconfig_item_t *ci)
   cb->flush_thread_started = false;
   cb->next_index = 0;
   cb->encoded_stats = NULL;
-  cb->encoded_stats_length = DEFAULT_STATS_BATCH_LENGTH;
+  cb->max_num_encoded_stats = DEFAULT_MAX_STATS_NUM_IN_BATCH;
   cb->last_flush_start_time = (-1) * DEFAULT_FLUSH_INTERVAL_SECONDS;
 
   for (i = 0; i < ci->children_num; i++) {
@@ -913,13 +913,13 @@ static int load_config(oconfig_item_t *ci)
       }
     }
     else if (STR_EQ(child->key, "MaxStatsPerReport")) {
-      int encoded_stats_length = 0;
-      if (cf_util_get_int(child, &encoded_stats_length) ||
-          encoded_stats_length <= 0) {
+      int max_num_encoded_stats = 0;
+      if (cf_util_get_int(child, &max_num_encoded_stats) ||
+          max_num_encoded_stats <= 0) {
         ERROR("Bad MaxStatsPerReport value");
         goto exit;
       }
-      cb->encoded_stats_length = encoded_stats_length;
+      cb->max_num_encoded_stats = max_num_encoded_stats;
     }
 
 #undef  STR_EQ
@@ -957,10 +957,10 @@ static int load_config(oconfig_item_t *ci)
     goto exit;
 
   cb->encoded_stats = calloc(
-      cb->encoded_stats_length, sizeof(*cb->encoded_stats));
+      cb->max_num_encoded_stats, sizeof(*cb->encoded_stats));
   if (cb->encoded_stats == NULL) {
     ERROR("Failed to allocate cb->encoded_stats (length=%zu)",
-          cb->encoded_stats_length);
+          cb->max_num_encoded_stats);
     goto exit;
   }
 
