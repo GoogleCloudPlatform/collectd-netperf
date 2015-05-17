@@ -519,6 +519,7 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
     INFO("Wait for message %zu for %s to be accepted",
          cb->write_counter, cb->host);
     process_cq(cb, 1 /* Wait on CQ */);
+    INFO("Done!");
   }
 
   encoded_stats_end = cb->next_index;
