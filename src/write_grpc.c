@@ -501,7 +501,6 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
   char *status_details = NULL;
   size_t status_details_capacity;
   grpc_call *call = NULL;
-  grpc_event *ev = NULL;
   grpc_call_error grpc_rc;
   size_t buffer_alloc_size;
   size_t i;
@@ -594,7 +593,6 @@ exit:
   gpr_slice_unref(slice);
   if (byte_buffer) grpc_byte_buffer_destroy(byte_buffer);
   if (call) grpc_call_destroy(call);
-  if (ev) grpc_event_finish(ev);
   gpr_free(status_details);
   for (i = 0; i < encoded_stats_end; i++)
     free(cb->encoded_stats[i].buf);
