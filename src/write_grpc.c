@@ -20,6 +20,8 @@
 #include "nanopb/pb_encode.h"
 #include "grpc_data.pb.h"
 
+#include "safe_iop.h"
+
 #include "collectd.h"
 #include "common.h"
 #include "plugin.h"
@@ -34,7 +36,8 @@
 /*
  * Configuration and workspace
  */
-#define MAX_REPORTS_PER_SEND    256
+#define DEFAULT_FLUSH_INTERVAL_SECONDS  10.0
+#define DEFAULT_MAX_STATS_NUM_IN_BATCH      4096
 
 typedef struct {
   cdtime_t timestamp;
@@ -55,13 +58,15 @@ typedef struct grpc_callback {
   size_t write_accepted_counter;
   double deadline;
   double data_flush_interval;
+  double last_flush_start_time;
 
   pthread_t flush_thread_id;
   bool flush_thread_started;
 
   /* Buffers holding encoded Stats messages. */
   size_t next_index;
-  encoded_stats_pb encoded_stats[MAX_REPORTS_PER_SEND];
+  encoded_stats_pb *encoded_stats;
+  size_t max_num_encoded_stats;
 } grpc_callback;
 
 static grpc_callback *callbacks = NULL, *last_callback = NULL;
@@ -78,6 +83,7 @@ static void destroy_cb(void *arg)
   if (cb->cq) grpc_completion_queue_destroy(cb->cq);
   for (i = 0; i < cb->next_index; i++)
     free(cb->encoded_stats[i].buf);
+  free(cb->encoded_stats);
   free(cb);
 }
 
@@ -309,15 +315,20 @@ static void log_gpr_to_collectd(gpr_log_func_args *args) {
 static bool encoded_stats_ostream_callback(
     pb_ostream_t *stream, const uint8_t* buf, size_t count) {
   encoded_stats_pb *encoded = (encoded_stats_pb *) stream->state;
+  size_t new_buf_len;
 
-  if (encoded->buf_len + count > encoded->buf_size) {
+  if (!safe_add(&new_buf_len, encoded->buf_len, count)) {
+    ERROR("[I] new length %zu + %zu overflows", encoded->buf_len, count);
+    return false;
+  }
+  if (new_buf_len > encoded->buf_size) {
     ERROR("Buffer length %zu exceeded; write %zu; offset %zu",
           encoded->buf_size, count, encoded->buf_len);
     return false;
   }
 
   memcpy(encoded->buf + encoded->buf_len, buf, count);
-  encoded->buf_len += count;
+  encoded->buf_len = new_buf_len;
 
   return true;
 }
@@ -411,13 +422,13 @@ static int process_cq(grpc_callback *cb, int do_sleep) {
   return 1;
 }
 
-/* Returns sum of buffer lengths */
-static size_t get_sum_lengths(encoded_stats_pb *start, size_t num) {
+/* Accumulates buffer lengths into sum. Returns false on overflow */
+static bool add_lengths(size_t *sum, encoded_stats_pb *start, size_t num) {
   size_t i;
-  size_t ret = 0;
   for (i = 0; i < num; i++)
-    ret += start[i].buf_len;
-  return ret;
+    if (!safe_add(sum, *sum, start[i].buf_len))
+      return false;
+  return true;
 }
 
 /* Fills in ops to perform a simple call and returns number of ops. Returns
@@ -492,9 +503,12 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
   grpc_call *call = NULL;
   grpc_event *ev = NULL;
   grpc_call_error grpc_rc;
+  size_t buffer_alloc_size;
   size_t i;
   size_t encoded_stats_end;
   int rc = 0;
+
+  cb->last_flush_start_time = CDTIME_T_TO_DOUBLE(cdtime());
 
   if (cb->next_index == 0)
     return 0;
@@ -518,11 +532,18 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
 
   /* Over-estimate total length: each encoded Stats message will need a
    * prepended length (2 bytes are enough), plus a short header for framing
-   * AggregatedStats. */
-  slice = gpr_slice_malloc(
-      get_sum_lengths(&cb->encoded_stats[0], encoded_stats_end) +
-      encoded_stats_end * 2 +
-      128);
+   * AggregatedStats. If we under-estimate, encoding will fail (safely). */
+  if (!safe_add3(&buffer_alloc_size,
+                 encoded_stats_end, encoded_stats_end, (size_t)128) ||
+      !add_lengths(&buffer_alloc_size,
+                   &cb->encoded_stats[0], encoded_stats_end)) {
+    ERROR("Buffer allocation size overflowed");
+    rc = -1;
+    goto exit;
+  }
+  /* gpr_slice_malloc aborts if malloc() fails */
+  slice = gpr_slice_malloc(buffer_alloc_size);
+
   stream_state.slice = slice;
   stream_state.offset = 0;
   stream.callback = slice_and_offset_ostream_callback;
@@ -587,11 +608,22 @@ exit:
 static void *flush_data_thread(void *arg)
 {
   grpc_callback *cb = arg;
+  useconds_t usec_to_sleep = cb->data_flush_interval * 1e6;
+  double time_from_last_flush;
 
   while (1) {
-    usleep(cb->data_flush_interval * 1e6);
+    usleep(usec_to_sleep);
     gpr_mu_lock(&cb->mutex);
-    do_flush_nolock(cb, 0);
+    time_from_last_flush =
+        CDTIME_T_TO_DOUBLE(cdtime()) - cb->last_flush_start_time;
+    if (time_from_last_flush < cb->data_flush_interval) {
+      /* Skip flush, too close to last flush */
+      usec_to_sleep = (cb->data_flush_interval - time_from_last_flush) * 1e6;
+    } else {
+      do_flush_nolock(cb, 0);
+      /* Set clock for full data flush interval */
+      usec_to_sleep = cb->data_flush_interval * 1e6;
+    }
     gpr_mu_unlock(&cb->mutex);
   }
 
@@ -660,15 +692,20 @@ static int write_data(const data_set_t *ds, const value_list_t *vl,
     goto exit;
   }
 
-  encoded_stats.buf = malloc(encoded_stats.buf_len);
+  if (!(encoded_stats.buf = gpr_malloc(encoded_stats.buf_len))) {
+    ERROR("malloc failed for encoded stats buf (size %zu)",
+          encoded_stats.buf_len);
+    rc = -1;
+    goto exit;
+  }
   memcpy(encoded_stats.buf, buf, encoded_stats.buf_len);
 
   cb->encoded_stats[cb->next_index++] = encoded_stats;
-  if (cb->next_index >= sizeof(cb->encoded_stats)/sizeof(cb->encoded_stats[0]))
+  if (cb->next_index >= cb->max_num_encoded_stats)
     do_flush_nolock(cb, 0);
 
   DEBUG("write_grpc write_data: %zu/%zu slices",
-        cb->next_index, sizeof(cb->encoded_stats)/sizeof(cb->encoded_stats[0]));
+        cb->next_index, encoded_stats);
 
 exit:
   gpr_mu_unlock(&cb->mutex);
@@ -786,7 +823,7 @@ static int load_config(oconfig_item_t *ci)
 
   if (ci == NULL) goto exit;
 
-  if ((cb = malloc(sizeof(*cb))) == NULL) {
+  if ((cb = gpr_malloc(sizeof(*cb))) == NULL) {
     ERROR("write_grpc plugin: failed to allocate memory for callback data.");
     goto exit;
   }
@@ -800,9 +837,12 @@ static int load_config(oconfig_item_t *ci)
   cb->write_counter = 0;
   cb->write_accepted_counter = 0;
   cb->deadline = 20.0;
-  cb->data_flush_interval = 2.5;
+  cb->data_flush_interval = DEFAULT_FLUSH_INTERVAL_SECONDS;
   cb->flush_thread_started = false;
   cb->next_index = 0;
+  cb->encoded_stats = NULL;
+  cb->max_num_encoded_stats = DEFAULT_MAX_STATS_NUM_IN_BATCH;
+  cb->last_flush_start_time = (-1) * DEFAULT_FLUSH_INTERVAL_SECONDS;
 
   for (i = 0; i < ci->children_num; i++) {
     oconfig_item_t *child = &ci->children[i];
@@ -851,6 +891,15 @@ static int load_config(oconfig_item_t *ci)
         goto exit;
       }
     }
+    else if (STR_EQ(child->key, "MaxStatsPerReport")) {
+      int max_num_encoded_stats = 0;
+      if (cf_util_get_int(child, &max_num_encoded_stats) ||
+          max_num_encoded_stats <= 0) {
+        ERROR("Bad MaxStatsPerReport value");
+        goto exit;
+      }
+      cb->max_num_encoded_stats = max_num_encoded_stats;
+    }
 
 #undef  STR_EQ
   }
@@ -885,6 +934,14 @@ static int load_config(oconfig_item_t *ci)
           root_pem_filename)))
     /* Error already logged */
     goto exit;
+
+  cb->encoded_stats = calloc(
+      cb->max_num_encoded_stats, sizeof(*cb->encoded_stats));
+  if (cb->encoded_stats == NULL) {
+    ERROR("Failed to allocate cb->encoded_stats (length=%zu)",
+          cb->max_num_encoded_stats);
+    goto exit;
+  }
 
   /* Success! */
   rc = 0;

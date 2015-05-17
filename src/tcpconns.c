@@ -60,6 +60,10 @@
 #include "collectd.h"
 #include "common.h"
 #include "plugin.h"
+#include "safe_iop.h"
+
+#include <stdlib.h>
+#include <string.h>
 
 #if defined(__OpenBSD__) || defined(__NetBSD__)
 #undef HAVE_SYSCTLBYNAME /* force HAVE_LIBKVM_NLIST path */
@@ -146,6 +150,27 @@ struct nlreq {
   struct nlmsghdr nlh;
   struct inet_diag_req r;
 };
+
+/* Identifies fields to report from tcp_info */
+enum tcpi_field_type {
+  UINT8  = 1,
+  UINT32 = 4,
+  UINT64 = 8,
+};
+#define TCPI_FIELD_TYPE_SIZE(type) ((size_t)type)
+struct tcpi_field_selector {
+  const char *name;  /* Name of value_list field to report, NULL for last */
+  int ds_type;       /* TODO(arielshaqed): How can we report 64-bit
+                      * counters? (Ours are probably DS_TYPE_COUNTER,
+                      * maybe use that?) */
+  enum tcpi_field_type tcpi_type;
+  uint32_t offset;  /* Offset inside tcp_info to read field. Must be aligned. */
+  /* TODO(arielshaqed): States in which to record the field? */
+};
+
+static struct tcpi_field_selector *tcpi_fields_to_report = NULL;
+static size_t num_tcpi_fields_to_report = 0;
+static size_t tcpi_fields_to_report_size = 0;
 #endif
 
 static const char *tcp_state[] =
@@ -279,6 +304,7 @@ static const char *config_keys[] =
   "ReportByPorts",
   "ReportByConnections",
   "ConnectionsAgeLimitSecs",
+  "TCPInfoField",
 };
 static int config_keys_num = STATIC_ARRAY_SIZE (config_keys);
 
@@ -292,6 +318,103 @@ static uint32_t count_total[TCP_STATE_MAX + 1];
 
 #if KERNEL_LINUX
 #if HAVE_STRUCT_LINUX_INET_DIAG_REQ
+static _Bool parse_ds_type(const char *str, int *ds_type) {
+#define STR_CASE(name) do {                               \
+      if (strcasecmp(str, #name) == 0) {                  \
+        *ds_type = DS_TYPE_ ## name;                      \
+        return 1;                                         \
+      }                                                   \
+  } while (0)
+
+  STR_CASE(COUNTER);
+  STR_CASE(GAUGE);
+  STR_CASE(DERIVE);
+  STR_CASE(ABSOLUTE);
+  return 0;
+#undef STR_CASE
+}
+
+static _Bool parse_c_type(const char *str, enum tcpi_field_type *c_type) {
+#define STR_CASE(name) do {                               \
+      if (strcasecmp(str, #name) == 0) {                  \
+        *c_type = name;                                   \
+        return 1;                                         \
+      }                                                   \
+  } while (0)
+
+  STR_CASE(UINT8);
+  STR_CASE(UINT32);
+  STR_CASE(UINT64);
+  return 0;
+#undef STR_CASE
+}
+
+static void tcpinfo_field_selector_dispose(struct tcpi_field_selector *field) {
+  sfree(*(char**)&field->name);
+}
+
+static _Bool parse_tcpinfo_field_selector(
+    const char *selector_orig, struct tcpi_field_selector *field) {
+  /* Parse a field selector that looks like this:
+        NAME      DS_TYPE     C_TYPE:OFFSET
+        rtt       GAUGE       uint32:64 */
+  char *parse_ptr = NULL;
+  char *selector = strdup(selector_orig);
+  char *token;
+  const char *c_type_string;
+  const char *offset_string;
+  _Bool rc = 0;
+  if (!(token = strtok_r(selector, " \t\n,", &parse_ptr))) {
+    ERROR ("Field selector \"%s\" missing NAME", selector_orig);
+    goto exit;
+  }
+  field->name = strdup(token);
+  if (!(token = strtok_r(NULL, " \t\n,", &parse_ptr))) {
+    ERROR ("Field selector \"%s\" missing DS_TYPE", selector_orig);
+    goto exit;
+  }
+  if (!parse_ds_type(token, &field->ds_type)) {
+    ERROR ("Bad DS_TYPE \"%s\" in field selector \"%s\"", token, selector_orig);
+    goto exit;
+  }
+  if (!(token = strtok_r(NULL, " \t\n,", &parse_ptr))) {
+    ERROR ("Field selector \"%s\" missing C_TYPE:OFFSET", selector_orig);
+    goto exit;
+  }
+  c_type_string = token;
+  if (!(token = strchr(token, ':'))) {
+    ERROR ("Missing ':' delimiter in C_TYPE:OFFSET \"%s\" "
+           "in field selector \"%s\"",
+           c_type_string, selector_orig);
+    goto exit;
+  }
+  *token = '\0';
+  offset_string = token+1;
+  if (!parse_c_type(c_type_string, &field->tcpi_type)) {
+    ERROR ("Bad C_TYPE \"%s\" in field selector \"%s\"",
+           c_type_string, selector_orig);
+    goto exit;
+  }
+  errno = 0;
+  field->offset = strtoull(offset_string, &token, 0);
+  if (errno) {
+    char err[256];
+    ERROR ("Bad offset \"%s\" in field selector \"%s\": %s",
+           offset_string, selector_orig, sstrerror(errno, err, sizeof(err)));
+    goto exit;
+  }
+  if (*token != '\0') {
+    ERROR ("Offset \"%s\" in field selector \"%s\" contains trailing garbage",
+           offset_string, selector_orig);
+    goto exit;
+  }
+  rc = 1;
+
+exit:
+  sfree(selector);
+  return rc;
+}
+
 /* This depends on linux inet_diag_req because if this structure is missing,
  * sequence_number is useless and we get a compilation warning.
  */
@@ -506,14 +629,26 @@ typedef struct value_list_batch_s {
 static value_list_batch_t *value_list_batch_create(size_t size)
 {
     value_list_batch_t *ret;
+    size_t ret_size;
     size_t i;
     const value_list_t vl_init = VALUE_LIST_INIT;
-    if (size < 4) {
+    if (size < 4)
+    {
         ERROR("Buffer size %zu < 4; using 4", size);
         size = 4;
     }
-    ret =
-        malloc(sizeof(value_list_batch_t) + (size - 1) * sizeof(value_list_t));
+    if (!safe_mul(&ret_size, size-1, sizeof(value_list_t)) ||
+        !safe_add(&ret_size, ret_size, sizeof(value_list_batch_t)))
+    {
+        ERROR("Buffer size overflow for %zu + %zu * %zu",
+              sizeof(value_list_batch_t), size-1, sizeof(value_list_t));
+        return NULL;
+    }
+    if (!(ret = malloc(ret_size))) {
+        ERROR("Failed to allocate %zu byte buffer for value_list_batch",
+              ret_size);
+        return NULL;
+    }
     ret->size = size;
     for (i = 0; i < size; i++)
         ret->buffer[i] = vl_init;
@@ -551,11 +686,17 @@ static int value_list_batch_maybe_flush(value_list_batch_t *batch)
 }
 
 /* Returns a value_list to populate with values; must call
- * value_list_batch_release before calling again. */
+ * value_list_batch_release or value_list_batch_abort before calling again. */
 static value_list_t *value_list_batch_get(value_list_batch_t *batch)
 {
     value_list_batch_maybe_flush(batch);
     return &batch->buffer[batch->cur];
+}
+
+/* Frees value_list without sending it on. */
+static void value_list_batch_abort(value_list_batch_t *batch)
+{
+  free(batch->buffer[batch->cur].values);
 }
 
 static void value_list_batch_release(value_list_batch_t *batch)
@@ -565,8 +706,25 @@ static void value_list_batch_release(value_list_batch_t *batch)
 }
 
 /* Return 1 if tcpi should be reported */
-static int filter_tcpi(const struct tcp_info* tcpi)
+static int filter_tcpi(const struct tcp_info* tcpi, size_t tcpi_size)
 {
+  /* Returns 0 if tcpi_size is not large enough to contain field. */
+#define	NEED_FIELD(field, tcpi_size)                                    \
+  do {                                                                  \
+      if (offsetof(struct tcp_info, field) +                            \
+          sizeof(((struct tcp_info *)NULL)->field) >                    \
+          tcpi_size) {                                                  \
+        ERROR ("tcp_info size %zu too small to hold %s",                \
+               tcpi_size, #field);                                      \
+        return 0;                                                       \
+      }                                                                 \
+  } while(0)
+
+  NEED_FIELD(tcpi_last_data_sent, tcpi_size);
+  /* NEED_FIELD(tcpi_last_ack_sent, tcpi_size);*/
+  NEED_FIELD(tcpi_last_data_recv, tcpi_size);
+  NEED_FIELD(tcpi_last_ack_recv, tcpi_size);
+
   /* Skip last ACK sent, it's documented "Not remembered, sorry." */
   return connections_age_limit_msecs < 0 ||
       tcpi->tcpi_last_data_sent < connections_age_limit_msecs ||
@@ -579,31 +737,85 @@ static int filter_tcpi(const struct tcp_info* tcpi)
 static void conn_handle_tcpi(
     value_list_batch_t *batch, uint8_t state,
     const char src[], uint16_t sport, const char dst[], uint16_t dport,
-    const struct tcp_info* tcpi)
+    const struct tcp_info* tcpi, size_t tcpi_size)
 {
     value_list_t *vl = value_list_batch_get(batch);
     const char *state_name = TCP_STATE_MIN <= state && state <= TCP_STATE_MAX ?
         tcp_state[state] : "UNKNOWN";
-    DEBUG ("%s:%hu -> %s:%hu  %s   :  %u",
-           src, sport, dst, dport, state_name, tcpi->tcpi_rtt);
+    int tcpi_field_index;
+    int value_index;
+    _Bool ok = 1;
 
-    vl->values = calloc(1, sizeof(value_t));
-    vl->values_len = 1;
+    vl->values = calloc(num_tcpi_fields_to_report, sizeof(value_t));
     sstrncpy (vl->host, hostname_g, sizeof (vl->host));
     sstrncpy (vl->plugin, "tcpconns", sizeof (vl->plugin));
-    snprintf(vl->plugin_instance, sizeof(vl->plugin_instance),
-	"%s:%u_%s:%u_%s", src, sport, dst, dport, state_name);
+    snprintf(vl->plugin_instance, sizeof (vl->plugin_instance),
+             "%s:%u_%s:%u_%s", src, sport, dst, dport, state_name);
     sstrncpy (vl->type, "tcp_connections_perf", sizeof (vl->type));
-    /* Types must match definition in types.db */
-    vl->values[0].gauge = tcpi->tcpi_rtt;
-
-    value_list_batch_release(batch);
+    for (tcpi_field_index = 0, value_index = 0;
+         tcpi_field_index < num_tcpi_fields_to_report;
+         tcpi_field_index++) {
+        const struct tcpi_field_selector *field =
+            &tcpi_fields_to_report[tcpi_field_index];
+        unsigned char *value_bytes;
+        uint64_t value;
+        if (field->offset + TCPI_FIELD_TYPE_SIZE(field->tcpi_type) >
+            tcpi_size) {
+          ERROR ("tcpconns plugin: conn_handle_tcpi: "
+                 "Field %s not in reported tcp_info "
+                 "(%" PRIu32 " + %zu > %zu)",
+                 field->name,
+                 field->offset,
+                 TCPI_FIELD_TYPE_SIZE(field->tcpi_type),
+                 tcpi_size);
+          ok = 0;
+          break;
+        }
+        value_bytes = (unsigned char *)tcpi + field->offset;
+        switch(field->tcpi_type) {
+          case UINT8:
+            value = *(uint8_t*)value_bytes;
+            break;
+          case UINT32:
+            value = *(uint32_t*)value_bytes;
+            break;
+          case UINT64:
+            value = *(uint64_t*)value_bytes;
+            break;
+          default:
+            /* Read configuration should have caught this error */
+            continue;
+        }
+        switch (field->ds_type) {
+          case DS_TYPE_COUNTER:
+            vl->values[value_index++].counter = value;
+            break;
+          case DS_TYPE_GAUGE:
+            vl->values[value_index++].gauge = value;
+            break;
+          case DS_TYPE_DERIVE:
+            vl->values[value_index++].derive = value;
+            break;
+          case DS_TYPE_ABSOLUTE:
+            vl->values[value_index++].absolute = value;
+            break;
+          default:
+            /* Read configuration should have caught this error */
+            break;
+        }
+    }
+    if (ok) {
+      vl->values_len = value_index;
+      value_list_batch_release(batch);
+    } else {
+      value_list_batch_abort(batch);
+    }
 } /* conn_handle_tcpi */
 
-/* Returns tcp_info in an rtattr in h. Returns NULL if all
- * rtattr's scanned and no tcp_info found. h is assumed to hold at least
- * enough bytes to hold INET_DIAG_INFO.*/
-static struct tcp_info *get_tcp_info(struct nlmsghdr *h)
+/* Returns tcp_info in an rtattr in h. Returns NULL if all rtattr's scanned
+ * and no tcp_info found. Fills in number of relevant bytes of h in
+ * *size. */
+static struct tcp_info *get_tcp_info(struct nlmsghdr *h, size_t *size)
 {
   struct inet_diag_msg *r = NLMSG_DATA(h);
   ssize_t remaining_len = h->nlmsg_len - NLMSG_LENGTH(sizeof(*r));
@@ -613,6 +825,7 @@ static struct tcp_info *get_tcp_info(struct nlmsghdr *h)
        attr = RTA_NEXT(attr, remaining_len)) {
       DEBUG ("Type = %d ; %zd bytes remaining", attr->rta_type, remaining_len);
     if (attr->rta_type == INET_DIAG_INFO) {
+      *size = RTA_PAYLOAD(attr);
       return RTA_DATA(attr);
       break;
     }
@@ -633,6 +846,12 @@ static int conn_read_netlink (void)
   struct inet_diag_msg *r;
   value_list_batch_t *batch = value_list_batch_create(2048);
   char buf[32768];
+
+  if (!batch)
+  {
+    /* Error already logged */
+    return (-1);
+  }
 
   /* If this fails, it's likely a permission problem. We'll fall back to
    * reading this information from files below. */
@@ -732,20 +951,27 @@ static int conn_read_netlink (void)
 	return (1);
       }
 
-      /* TODO(arielshaqed): Fix: Check data length around NLMSG_DATA()! */
       r = NLMSG_DATA(h);
-      {
-	struct tcp_info *tcpi = get_tcp_info(h);
+      do {
+        /* We access tcpi by configurable offset; must check each access via
+         * tcpi before use! */
+	struct tcp_info *tcpi;
+        size_t tcpi_size;
         u_int8_t state = r->idiag_state;
 	unsigned short sport = ntohs(r->id.idiag_sport);
 	unsigned short dport = ntohs(r->id.idiag_dport);
+
+        tcpi = get_tcp_info(h, &tcpi_size);
+        if (!tcpi)
+          break;
 
 	/* This code does not (need to) distinguish between IPv4 and IPv6. */
         if (report_by_ports)
           conn_handle_ports (sport, dport, state);
 
         if (report_by_connections) {
-          if (r->idiag_state != TCP_STATE_LISTEN && tcpi && filter_tcpi(tcpi)) {
+          if (r->idiag_state != TCP_STATE_LISTEN && tcpi &&
+              filter_tcpi(tcpi, tcpi_size)) {
 	    char src[INET6_ADDRSTRLEN];
 	    char dst[INET6_ADDRSTRLEN];
 	    if (!inet_ntop(r->idiag_family, r->id.idiag_src, src, sizeof(src)))
@@ -753,10 +979,10 @@ static int conn_read_netlink (void)
 	    if (!inet_ntop(r->idiag_family, r->id.idiag_dst, dst, sizeof(dst)))
               strncpy(dst, "<UNKNOWN>", sizeof(dst));
 	    conn_handle_tcpi (
-                batch, r->idiag_state, src, sport, dst, dport, tcpi);
+                batch, r->idiag_state, src, sport, dst, dport, tcpi, tcpi_size);
           }
 	}
-      }
+      } while (0);
 
       h = NLMSG_NEXT(h, status);
     } /* while (NLMSG_OK) */
@@ -914,9 +1140,37 @@ static int conn_config (const char *key, const char *value)
   else if (strcasecmp (key, "ConnectionsAgeLimitSecs") == 0) {
     connections_age_limit_msecs = atof(value) * 1000;
   }
+  else if (strcasecmp (key, "TCPInfoField") == 0) {
+    struct tcpi_field_selector field;
+    field.name = NULL;
+    if (!parse_tcpinfo_field_selector(value, &field)) {
+      ERROR ("tcpconns plugin: Failed to parse field selector \"%s\"", value);
+      tcpinfo_field_selector_dispose(&field);
+      return (1);
+    }
+    if (tcpi_fields_to_report_size <= num_tcpi_fields_to_report) {
+      tcpi_fields_to_report_size = tcpi_fields_to_report_size * 2;
+      if (tcpi_fields_to_report_size < 3)
+        tcpi_fields_to_report_size = 3;
+      if (!(tcpi_fields_to_report = realloc(
+              tcpi_fields_to_report,
+              tcpi_fields_to_report_size * sizeof(*tcpi_fields_to_report)))) {
+        ERROR ("tcpconns plugin: Out of memory for %zu fields (field %s)",
+               tcpi_fields_to_report_size, value);
+        tcpinfo_field_selector_dispose(&field);
+        return (1);
+      }
+    }
+    tcpi_fields_to_report[num_tcpi_fields_to_report++] = field;
+  }
   else
   {
     return (-1);
+  }
+
+  if (num_tcpi_fields_to_report > 0 && !report_by_connections) {
+    WARNING ("Requested reporting of %zu tcp_info fields "
+             "but not reporting connections", num_tcpi_fields_to_report);
   }
 
   return (0);
@@ -927,6 +1181,35 @@ static int conn_init (void)
 {
   if (port_collect_total == 0 && port_list_head == NULL)
     port_collect_listening = 1;
+
+#ifdef HAVE_LINUX_INET_DIAG_H
+  if (report_by_connections) {  /* Define what dataset we shall be reporting */
+    data_set_t data_set;
+    size_t i;
+    if (num_tcpi_fields_to_report == 0 && report_by_connections) {
+      ERROR ("TCPConns plugin: "
+             "ReportByConnections requested, "
+             "but no TCPInfoField lines configured.");
+      return 1;
+    }
+    strncpy(data_set.type, "tcp_connections_perf", sizeof(data_set.type));
+    data_set.ds_num = num_tcpi_fields_to_report;
+    data_set.ds = calloc(num_tcpi_fields_to_report, sizeof(*data_set.ds));
+    for (i = 0; i < num_tcpi_fields_to_report; i++) {
+      strncpy(data_set.ds[i].name, tcpi_fields_to_report[i].name,
+              sizeof(data_set.ds[i].name));
+      data_set.ds[i].type = tcpi_fields_to_report[i].ds_type;
+      data_set.ds[i].min = NAN;
+      data_set.ds[i].max = NAN;
+    }
+    if (plugin_unregister_data_set ("tcp_connections_perf") < 0) {
+      WARNING ("TCPConns plugin: "
+               "Expected to find dataset \"tcp_connections_perf\" in types.db");
+    }
+    plugin_register_data_set (&data_set);
+    sfree (data_set.ds);
+  }
+#endif /* HAVE_LINUX_INET_DIAG_H */
 
   return (0);
 } /* int conn_init */
