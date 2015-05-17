@@ -375,6 +375,12 @@ static int process_cq(grpc_callback *cb, int do_sleep) {
       return 0;
     }
     switch (ev->type) {
+      case GRPC_OP_COMPLETE:
+        /* Write was accepted & completed (the standard result so DEBUG log) */
+        DEBUG("write_grpc process_cb: %s: Write %zu/%zu completed",
+             cb->host, cb->write_accepted_counter, cb->write_counter);
+        cb->write_accepted_counter++;
+        break;
       case GRPC_WRITE_ACCEPTED:
         INFO("write_grpc process_cb: %s: Write %zu/%zu accepted",
               cb->host, cb->write_accepted_counter, cb->write_counter);
@@ -399,6 +405,7 @@ static int process_cq(grpc_callback *cb, int do_sleep) {
                 cb->host, ev->type);
         break;
     }
+    grpc_event_finish(ev);
   }
 
   return 1;
@@ -557,38 +564,10 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
     goto exit;
   }
 
-  ev = grpc_completion_queue_next(cb->cq, gpr_inf_future);
-  if (!ev) {
-    ERROR("write_grpc grpc_completion_queue_next: no completion event");
-    rc = -1;
-    goto exit;
-  }
+  cb->write_counter++;
 
-  if (response == NULL) {
-    ERROR("[I] No response received from server");
-    /* Keep going */
-  } else {
-    DEBUG("Received %zu bytes", grpc_byte_buffer_length(response));
-    grpc_byte_buffer_destroy(response);
-  }
-
-  if (status != GRPC_STATUS_OK) {
-    ERROR("write_grpc grpc_completion_queue_next: failed: status %d",
-          status);
-    rc = -2;
-    goto exit;
-  }
-
-  if (ev->data.op_complete != GRPC_OP_OK) {
-    ERROR("write_grpc grpc_completion_queue_next: completion failed: %s",
-          status_details ? status_details : "<no details>");
-    rc = -3;
-    goto exit;
-  }
-
-  /* (Don't read from stream) */
-
-  process_cq(cb, 0 /* don't sleep */);
+  /* At least one completion callback is guaranteed -- sleep a while for it */
+  process_cq(cb, 1);
 
 exit:
   gpr_slice_unref(slice);
