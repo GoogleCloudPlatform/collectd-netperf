@@ -1745,6 +1745,9 @@ rm -rf %{buildroot}
 %{__install} -d %{buildroot}%{_sharedstatedir}/collectd/
 %{__install} -d %{buildroot}%{_sysconfdir}/collectd.d/
 
+%{__mkdir} -p %{buildroot}/opt/libgrpc-td/lib/
+%{__cp} -R /opt/libgrpc-td/lib/ %{buildroot}/opt/libgrpc-td/lib/
+
 %{__mkdir} -p %{buildroot}%{_localstatedir}/www
 %{__mkdir} -p %{buildroot}/%{_sysconfdir}/httpd/conf.d
 
@@ -2314,6 +2317,7 @@ fi
 %if %{with_write_grpc}
 %files write_grpc
 %{_libdir}/%{name}/write_grpc.so
+/opt/libgrpc-td/
 %endif
 
 %if %{with_write_http}
