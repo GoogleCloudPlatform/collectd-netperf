@@ -1366,6 +1366,9 @@ EXTRA_DIST += grpc_data.proto grpc_updater.proto		\
 	nanopb/generator/protoc-gen-nanopb			\
 	nanopb/generator/protoc-gen-nanopb.bat
 
+# Safe integer ops (used for TCPConns and write_grpc).
+EXTRA_DIST += safe_iop.h
+
 if HAVE_PROTOC_C
 CLEANFILES += grpc_data.pb.c grpc_data.pb.h
 
