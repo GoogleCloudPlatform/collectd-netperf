@@ -1,3 +1,5 @@
+# Edited by arielshaqed to build OUR plugins (and little else)
+
 #
 # q: What is this ?
 # a: A specfile for building RPM packages of current collectd releases, for
@@ -40,140 +42,145 @@
 
 # plugins only buildable on RHEL6
 # (NB: %{elN} macro is not available on RHEL < 6)
-%{?el6:%global _has_libyajl 1}
-%{?el6:%global _has_recent_libpcap 1}
-%{?el6:%global _has_recent_sockios_h 1}
-%{?el6:%global _has_recent_libganglia 1}
-%{?el6:%global _has_working_libiptc 1}
-%{?el6:%global _has_ip_vs_h 1}
-%{?el6:%global _has_lvm2app_h 1}
-%{?el6:%global _has_libmodbus 1}
-%{?el6:%global _has_libudev 1}
-%{?el6:%global _has_iproute 1}
-%{?el6:%global _has_atasmart 1}
-%{?el6:%global _has_hiredis 1}
+%{?el6:%global _has_libyajl 0}
+%{?el6:%global _has_recent_libpcap 0}
+%{?el6:%global _has_recent_sockios_h 0}
+%{?el6:%global _has_recent_libganglia 0}
+%{?el6:%global _has_working_libiptc 0}
+%{?el6:%global _has_ip_vs_h 0}
+%{?el6:%global _has_lvm2app_h 0}
+%{?el6:%global _has_libmodbus 0}
+%{?el6:%global _has_libudev 0}
+%{?el6:%global _has_iproute 0}
+%{?el6:%global _has_atasmart 0}
+%{?el6:%global _has_hiredis 0}
 
-%{?el7:%global _has_libyajl 1}
-%{?el7:%global _has_recent_libpcap 1}
-%{?el7:%global _has_recent_sockios_h 1}
-%{?el7:%global _has_working_libiptc 1}
-%{?el7:%global _has_ip_vs_h 1}
-%{?el7:%global _has_lvm2app_h 1}
-%{?el7:%global _has_libudev 1}
-%{?el7:%global _has_recent_librrd 1}
-%{?el7:%global _has_varnish4 1}
-%{?el7:%global _has_broken_libmemcached 1}
-%{?el7:%global _has_iproute 1}
-%{?el7:%global _has_atasmart 1}
-%{?el7:%global _has_hiredis 1}
+%{?el7:%global _has_libyajl 0}
+%{?el7:%global _has_recent_libpcap 0}
+%{?el7:%global _has_recent_sockios_h 0}
+%{?el7:%global _has_working_libiptc 0}
+%{?el7:%global _has_ip_vs_h 0}
+%{?el7:%global _has_lvm2app_h 0}
+%{?el7:%global _has_libudev 0}
+%{?el7:%global _has_recent_librrd 0}
+%{?el7:%global _has_varnish4 0}
+%{?el7:%global _has_broken_libmemcached 0}
+%{?el7:%global _has_iproute 0}
+%{?el7:%global _has_atasmart 0}
+%{?el7:%global _has_hiredis 0}
 
-# plugins enabled by default
-%define with_aggregation 0%{!?_without_aggregation:1}
-%define with_amqp 0%{!?_without_amqp:1}
-%define with_apache 0%{!?_without_apache:1}
-%define with_apcups 0%{!?_without_apcups:1}
-%define with_ascent 0%{!?_without_ascent:1}
-%define with_battery 0%{!?_without_battery:1}
-%define with_bind 0%{!?_without_bind:1}
+# For GCE monitoring, enable a minimal set of plugins
+
+%define with_ping 0%{!?_without_ping:1}
+%define with_tcpconns 0%{!?_without_tcpconns:1}
+%define with_write_grpc 0%{!?_without_write_grpc:1}
+
+# Disable all the rest!
+
+%define with_aggregation 0%{!?_without_aggregation:0}
+%define with_amqp 0%{!?_without_amqp:0}
+%define with_apache 0%{!?_without_apache:0}
+%define with_apcups 0%{!?_without_apcups:0}
+%define with_ascent 0%{!?_without_ascent:0}
+%define with_battery 0%{!?_without_battery:0}
+%define with_bind 0%{!?_without_bind:0}
 %define with_ceph 0%{!?_without_ceph:0%{?_has_libyajl}}
-%define with_cgroups 0%{!?_without_cgroups:1}
-%define with_conntrack 0%{!?_without_conntrack:1}
-%define with_contextswitch 0%{!?_without_contextswitch:1}
-%define with_cpu 0%{!?_without_cpu:1}
-%define with_cpufreq 0%{!?_without_cpufreq:1}
-%define with_csv 0%{!?_without_csv:1}
-%define with_curl 0%{!?_without_curl:1}
+%define with_cgroups 0%{!?_without_cgroups:0}
+%define with_conntrack 0%{!?_without_conntrack:0}
+%define with_contextswitch 0%{!?_without_contextswitch:0}
+%define with_cpu 0%{!?_without_cpu:0}
+%define with_cpufreq 0%{!?_without_cpufreq:0}
+%define with_csv 0%{!?_without_csv:0}
+%define with_curl 0%{!?_without_curl:0}
 %define with_curl_json 0%{!?_without_curl_json:0%{?_has_libyajl}}
-%define with_curl_xml 0%{!?_without_curl_xml:1}
-%define with_dbi 0%{!?_without_dbi:1}
-%define with_df 0%{!?_without_df:1}
-%define with_disk 0%{!?_without_disk:1}
+%define with_curl_xml 0%{!?_without_curl_xml:0}
+%define with_dbi 0%{!?_without_dbi:0}
+%define with_df 0%{!?_without_df:0}
+%define with_disk 0%{!?_without_disk:0}
 %define with_dns 0%{!?_without_dns:0%{?_has_recent_libpcap}}
-%define with_drbd 0%{!?_without_drbd:1}
-%define with_email 0%{!?_without_email:1}
-%define with_entropy 0%{!?_without_entropy:1}
+%define with_drbd 0%{!?_without_drbd:0}
+%define with_email 0%{!?_without_email:0}
+%define with_entropy 0%{!?_without_entropy:0}
 %define with_ethstat 0%{!?_without_ethstat:0%{?_has_recent_sockios_h}}
-%define with_exec 0%{!?_without_exec:1}
-%define with_filecount 0%{!?_without_filecount:1}
-%define with_fscache 0%{!?_without_fscache:1}
+%define with_exec 0%{!?_without_exec:0}
+%define with_filecount 0%{!?_without_filecount:0}
+%define with_fscache 0%{!?_without_fscache:0}
 %define with_gmond 0%{!?_without_gmond:0%{?_has_recent_libganglia}}
-%define with_hddtemp 0%{!?_without_hddtemp:1}
-%define with_interface 0%{!?_without_interface:1}
-%define with_ipc 0%{!?_without_ipc:1}
-%define with_ipmi 0%{!?_without_ipmi:1}
+%define with_hddtemp 0%{!?_without_hddtemp:0}
+%define with_interface 0%{!?_without_interface:0}
+%define with_ipc 0%{!?_without_ipc:0}
+%define with_ipmi 0%{!?_without_ipmi:0}
 %define with_iptables 0%{!?_without_iptables:0%{?_has_working_libiptc}}
 %define with_ipvs 0%{!?_without_ipvs:0%{?_has_ip_vs_h}}
-%define with_irq 0%{!?_without_irq:1}
-%define with_java 0%{!?_without_java:1}
-%define with_virt 0%{!?_without_virt:1}
-%define with_load 0%{!?_without_load:1}
-%define with_logfile 0%{!?_without_logfile:1}
+%define with_irq 0%{!?_without_irq:0}
+%define with_java 0%{!?_without_java:0}
+%define with_virt 0%{!?_without_virt:0}
+%define with_load 0%{!?_without_load:0}
+%define with_logfile 0%{!?_without_logfile:0}
 %define with_log_logstash 0%{!?_without_log_logstash:0%{?_has_libyajl}}
 %define with_lvm 0%{!?_without_lvm:0%{?_has_lvm2app_h}}
-%define with_madwifi 0%{!?_without_madwifi:1}
-%define with_mbmon 0%{!?_without_mbmon:1}
-%define with_md 0%{!?_without_md:1}
-%define with_memcachec 0%{!?_without_memcachec:0%{!?_has_broken_libmemcached:1}}
-%define with_memcached 0%{!?_without_memcached:1}
-%define with_memory 0%{!?_without_memory:1}
-%define with_multimeter 0%{!?_without_multimeter:1}
+%define with_madwifi 0%{!?_without_madwifi:0}
+%define with_mbmon 0%{!?_without_mbmon:0}
+%define with_md 0%{!?_without_md:0}
+%define with_memcachec 0%{!?_without_memcachec:0%{!?_has_broken_libmemcached:0}}
+%define with_memcached 0%{!?_without_memcached:0}
+%define with_memory 0%{!?_without_memory:0}
+%define with_multimeter 0%{!?_without_multimeter:0}
 %define with_modbus 0%{!?_without_modbus:0%{?_has_libmodbus}}
-%define with_mysql 0%{!?_without_mysql:1}
+%define with_mysql 0%{!?_without_mysql:0}
 %define with_netlink 0%{!?_without_netlink:0%{?_has_iproute}}
-%define with_network 0%{!?_without_network:1}
-%define with_nfs 0%{!?_without_nfs:1}
-%define with_nginx 0%{!?_without_nginx:1}
-%define with_notify_desktop 0%{!?_without_notify_desktop:1}
-%define with_notify_email 0%{!?_without_notify_email:1}
-%define with_ntpd 0%{!?_without_ntpd:1}
-%define with_numa 0%{!?_without_numa:1}
-%define with_nut 0%{!?_without_nut:1}
-%define with_olsrd 0%{!?_without_olsrd:1}
-%define with_openldap 0%{!?_without_openldap:1}
-%define with_openvpn 0%{!?_without_openvpn:1}
-%define with_perl 0%{!?_without_perl:1}
-%define with_pinba 0%{!?_without_pinba:1}
-%define with_ping 0%{!?_without_ping:1}
-%define with_postgresql 0%{!?_without_postgresql:1}
-%define with_powerdns 0%{!?_without_powerdns:1}
-%define with_processes 0%{!?_without_processes:1}
-%define with_protocols 0%{!?_without_protocols:1}
-%define with_python 0%{!?_without_python:1}
+%define with_network 0%{!?_without_network:0}
+%define with_nfs 0%{!?_without_nfs:0}
+%define with_nginx 0%{!?_without_nginx:0}
+%define with_notify_desktop 0%{!?_without_notify_desktop:0}
+%define with_notify_email 0%{!?_without_notify_email:0}
+%define with_ntpd 0%{!?_without_ntpd:0}
+%define with_numa 0%{!?_without_numa:0}
+%define with_nut 0%{!?_without_nut:0}
+%define with_olsrd 0%{!?_without_olsrd:0}
+%define with_openldap 0%{!?_without_openldap:0}
+%define with_openvpn 0%{!?_without_openvpn:0}
+%define with_perl 0%{!?_without_perl:0}
+%define with_pinba 0%{!?_without_pinba:0}
+%define with_postgresql 0%{!?_without_postgresql:0}
+%define with_powerdns 0%{!?_without_powerdns:0}
+%define with_processes 0%{!?_without_processes:0}
+%define with_protocols 0%{!?_without_protocols:0}
+%define with_python 0%{!?_without_python:0}
 %define with_redis 0%{!?_without_redis:0%{?_has_hiredis}}
 %define with_rrdcached 0%{!?_without_rrdcached:0%{?_has_recent_librrd}}
-%define with_rrdtool 0%{!?_without_rrdtool:1}
-%define with_sensors 0%{!?_without_sensors:1}
-%define with_serial 0%{!?_without_serial:1}
+%define with_rrdtool 0%{!?_without_rrdtool:0}
+%define with_sensors 0%{!?_without_sensors:0}
+%define with_serial 0%{!?_without_serial:0}
 %define with_smart 0%{!?_without_smart:0%{?_has_atasmart}}
-%define with_snmp 0%{!?_without_snmp:1}
-%define with_statsd 0%{!?_without_statsd:1}
-%define with_swap 0%{!?_without_swap:1}
-%define with_syslog 0%{!?_without_syslog:1}
-%define with_table 0%{!?_without_table:1}
-%define with_tail 0%{!?_without_tail:1}
-%define with_tail_csv 0%{!?_without_tail_csv:1}
-%define with_tcpconns 0%{!?_without_tcpconns:1}
-%define with_teamspeak2 0%{!?_without_teamspeak2:1}
-%define with_ted 0%{!?_without_ted:1}
-%define with_thermal 0%{!?_without_thermal:1}
-%define with_threshold 0%{!?_without_threshold:1}
-%define with_unixsock 0%{!?_without_unixsock:1}
-%define with_uptime 0%{!?_without_uptime:1}
-%define with_users 0%{!?_without_users:1}
-%define with_uuid 0%{!?_without_uuid:1}
-%define with_varnish 0%{!?_without_varnish:0%{!?_has_varnish4:1}}
-%define with_vmem 0%{!?_without_vmem:1}
-%define with_vserver 0%{!?_without_vserver:1}
-%define with_wireless 0%{!?_without_wireless:1}
-%define with_write_graphite 0%{!?_without_write_graphite:1}
-%define with_write_http 0%{!?_without_write_http:1}
-%define with_write_log 0%{!?_without_write_log:1}
+%define with_snmp 0%{!?_without_snmp:0}
+%define with_statsd 0%{!?_without_statsd:0}
+%define with_swap 0%{!?_without_swap:0}
+%define with_syslog 0%{!?_without_syslog:0}
+%define with_table 0%{!?_without_table:0}
+%define with_tail 0%{!?_without_tail:0}
+%define with_tail_csv 0%{!?_without_tail_csv:0}
+%define with_teamspeak2 0%{!?_without_teamspeak2:0}
+%define with_ted 0%{!?_without_ted:0}
+%define with_thermal 0%{!?_without_thermal:0}
+%define with_threshold 0%{!?_without_threshold:0}
+%define with_unixsock 0%{!?_without_unixsock:0}
+%define with_uptime 0%{!?_without_uptime:0}
+%define with_users 0%{!?_without_users:0}
+%define with_uuid 0%{!?_without_uuid:0}
+%define with_varnish 0%{!?_without_varnish:0%{!?_has_varnish4:0}}
+%define with_vmem 0%{!?_without_vmem:0}
+%define with_vserver 0%{!?_without_vserver:0}
+%define with_wireless 0%{!?_without_wireless:0}
+%define with_write_graphite 0%{!?_without_write_graphite:0}
+%define with_write_http 0%{!?_without_write_http:0}
+%define with_write_log 0%{!?_without_write_log:0}
 %define with_write_redis 0%{!?_without_write_redis:0%{?_has_hiredis}}
-%define with_write_riemann 0%{!?_without_write_riemann:1}
-%define with_write_sensu 0%{!?_without_write_sensu:1}
-%define with_write_tsdb 0%{!?_without_write_tsdb:1}
-%define with_zfs_arc 0%{!?_without_zfs_arc:1}
-%define with_zookeeper 0%{!?_without_zookeeper:1}
+%define with_write_riemann 0%{!?_without_write_riemann:0}
+%define with_write_sensu 0%{!?_without_write_sensu:0}
+%define with_write_tsdb 0%{!?_without_write_tsdb:0}
+%define with_zfs_arc 0%{!?_without_zfs_arc:0}
+%define with_zookeeper 0%{!?_without_zookeeper:0}
 
 # Plugins not built by default because of dependencies on libraries not
 # available in RHEL or EPEL:
@@ -213,7 +220,7 @@
 
 Summary:	Statistics collection daemon for filling RRD files
 Name:		collectd
-Version:	5.4.2
+Version:	5.4.2.831.g1fbb4ee
 Release:	1%{?dist}
 URL:		http://collectd.org
 Source:		http://collectd.org/files/%{name}-%{version}.tar.bz2
@@ -300,7 +307,7 @@ Group:		System Environment/Daemons
 Requires:	%{name}%{?_isa} = %{version}-%{release}
 BuildRequires:	libxml2-devel, curl-devel
 %description bind
-The BIND plugin retrieves this information that's encoded in XML and provided
+The BIND plugin retrieves this information that\'s encoded in XML and provided
 via HTTP and submits the values to collectd.
 %endif
 
@@ -333,7 +340,7 @@ Requires:	%{name}%{?_isa} = %{version}-%{release}
 BuildRequires:	curl-devel, yajl-devel
 %description curl_json
 The cURL-JSON plugin queries JavaScript Object Notation (JSON) data using the
-cURL library and parses it according to the user's configuration.
+cURL library and parses it according to the user\'s configuration.
 %endif
 
 %if %{with_curl_xml}
@@ -377,7 +384,7 @@ Requires:	%{name}%{?_isa} = %{version}-%{release}, libpcap >= 1.0
 BuildRequires:	libpcap-devel >= 1.0
 %description dns
 The DNS plugin has a similar functionality to dnstop: It uses libpcap to get a
-copy of all traffic from/to port UDP/53 (that's the DNS port), interprets the
+copy of all traffic from/to port UDP/53 (that\'s the DNS port), interprets the
 packets and collects statistics of your DNS traffic.
 %endif
 
@@ -464,7 +471,7 @@ Requires:	%{name}%{?_isa} = %{version}-%{release}
 BuildRequires:	lvm2-devel
 %description lvm
 This plugin collects size of “Logical Volumes” (LV) and “Volume Groups” (VG)
-of Linux' “Logical Volume Manager” (LVM).
+of Linux\' “Logical Volume Manager” (LVM).
 %endif
 
 %if %{with_memcachec}
@@ -475,7 +482,7 @@ Requires:	%{name}%{?_isa} = %{version}-%{release}
 BuildRequires:	libmemcached-devel
 %description memcachec
 The Memcachec plugin uses libmemcached to read statistics from a Memcached
-instance. Note that another plugin, named `memcached', exists and does a
+instance. Note that another plugin, named \`memcached\', exists and does a
 similar job, without requiring the installation of libmemcached.
 %endif
 
@@ -569,7 +576,7 @@ Group:         System Environment/Daemons
 Requires:      %{name}%{?_isa} = %{version}-%{release}
 BuildRequires: openldap-devel
 %description openldap
-This plugin reads monitoring information from OpenLDAP's cn=Monitor subtree.
+This plugin reads monitoring information from OpenLDAP\'s cn=Monitor subtree.
 %endif
 
 %if %{with_perl}
@@ -728,6 +735,16 @@ Requires:	%{name}%{?_isa} = %{version}-%{release}
 BuildRequires:	libvirt-devel
 %description virt
 This plugin collects information from virtualized guests.
+%endif
+
+%if %{with_write_grpc}
+%package write_grpc
+Summary:	Write-gRPC plugin for collectd
+Group:		System Environment/Daemons
+Requires:	%{name}%{?_isa} = %{version}-%{release}
+%description write_grpc
+The WriteGRPC plugin sends the values collected by collected to the
+Google Cloud Network Monitoring endpoint, using the gRPC protocol.
 %endif
 
 %if %{with_write_http}
@@ -1495,6 +1512,12 @@ Collectd utilities
 %define _with_write_graphite --disable-write_graphite
 %endif
 
+%if %{with_write_grpc}
+%define _with_write_grpc --enable-write_grpc --with-grpc=/opt/libgrpc-td/
+%else
+%define _with_write_grpc --disable-write_grpc
+%endif
+
 %if %{with_write_http}
 %define _with_write_http --enable-write_http
 %else
@@ -1563,6 +1586,7 @@ Collectd utilities
 
 %configure CFLAGS="%{optflags} -DLT_LAZY_OR_NOW=\"RTLD_LAZY|RTLD_GLOBAL\"" \
 	--disable-static \
+	--disable-rpath \
 	--without-included-ltdl \
 	--enable-all-plugins=yes \
 	--enable-match_empty_counter \
@@ -1693,12 +1717,18 @@ Collectd utilities
 	%{?_with_vserver} \
 	%{?_with_wireless}\
 	%{?_with_write_graphite} \
+	%{?_with_write_grpc} \
 	%{?_with_write_http} \
 	%{?_with_write_log} \
 	%{?_with_write_riemann} \
 	%{?_with_write_sensu} \
 	%{?_with_write_tsdb}
 
+# https://fedoraproject.org/wiki/Packaging:Guidelines suggests adding this
+# when "contains standard rpath" messages show up.
+
+sed -i 's|^hardcode_libdir_flag_spec=.*|hardcode_libdir_flag_spec=""|g' libtool
+sed -i 's|^runpath_var=LD_RUN_PATH|runpath_var=DIE_RPATH_DIE|g' libtool
 
 %{__make} %{?_smp_mflags}
 
@@ -1741,6 +1771,8 @@ rm -f %{buildroot}%{_mandir}/man5/collectd-java.5*
 %endif
 
 %if ! %{with_perl}
+rm -f %{buildroot}/usr/share/perl5/Collectd.pm
+rm -fr %{buildroot}/usr/share/perl5/Collectd/
 rm -f %{buildroot}%{_mandir}/man5/collectd-perl.5*
 rm -f %{buildroot}%{_mandir}/man3/Collectd::Unixsock.3pm*
 rm -fr %{buildroot}/usr/lib/perl5/
@@ -2277,6 +2309,11 @@ fi
 %if %{with_varnish}
 %files varnish
 %{_libdir}/%{name}/varnish.so
+%endif
+
+%if %{with_write_grpc}
+%files write_grpc
+%{_libdir}/%{name}/write_grpc.so
 %endif
 
 %if %{with_write_http}
