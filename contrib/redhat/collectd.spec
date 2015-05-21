@@ -40,6 +40,11 @@
 %global _hardened_build 1
 %{?perl_default_filter}
 
+# Packaging for Cloud Network Monitoring Agent
+%define _prefix /opt/collectd-td/
+%define _mandir /opt/collectd-td/share/man/
+%define _docdir /opt/collectd-td/share/doc/
+
 # plugins only buildable on RHEL6
 # (NB: %{elN} macro is not available on RHEL < 6)
 %{?el6:%global _has_libyajl 0}
@@ -1746,7 +1751,7 @@ rm -rf %{buildroot}
 %{__install} -d %{buildroot}%{_sysconfdir}/collectd.d/
 
 %{__mkdir} -p %{buildroot}/opt/libgrpc-td/lib/
-%{__cp} -R /opt/libgrpc-td/lib/ %{buildroot}/opt/libgrpc-td/lib/
+%{__cp} -R /opt/libgrpc-td/lib/* %{buildroot}/opt/libgrpc-td/lib/
 
 %{__mkdir} -p %{buildroot}%{_localstatedir}/www
 %{__mkdir} -p %{buildroot}/%{_sysconfdir}/httpd/conf.d
@@ -1774,11 +1779,11 @@ rm -f %{buildroot}%{_mandir}/man5/collectd-java.5*
 %endif
 
 %if ! %{with_perl}
-rm -f %{buildroot}/usr/share/perl5/Collectd.pm
-rm -fr %{buildroot}/usr/share/perl5/Collectd/
-rm -f %{buildroot}%{_mandir}/man5/collectd-perl.5*
-rm -f %{buildroot}%{_mandir}/man3/Collectd::Unixsock.3pm*
-rm -fr %{buildroot}/usr/lib/perl5/
+rm -f %{buildroot}%{_datadir}/perl5/Collectd.pm
+rm -fr %{buildroot}%{_datadir}/perl5/Collectd/
+rm -f %{buildroot}%{_mandir}/man5/collectd-perl.5
+rm -f %{buildroot}%{_prefix}/share/man/man3/Collectd::Unixsock.3pm
+rm -fr %{buildroot}%{_libdir}/perl5/
 %endif
 
 %if ! %{with_postgresql}
