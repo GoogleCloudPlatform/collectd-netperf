@@ -298,9 +298,9 @@ Entertainment.
 
 %if %{with_barometer}
 %package barometer
-Summary:       barometer plugin for collectd
-Group:         System Environment/Daemons
-Requires:      %{name}%{?_isa} = %{version}-%{release}
+Summary:	barometer plugin for collectd
+Group:		System Environment/Daemons
+Requires:	%{name}%{?_isa} = %{version}-%{release}
 %description barometer
 Collects pressure and temperature from digital barometers.
 %endif
@@ -318,10 +318,10 @@ via HTTP and submits the values to collectd.
 
 %if %{with_ceph}
 %package ceph
-Summary:       Ceph plugin for collectd
-Group:         System Environment/Daemons
-Requires:      %{name}%{?_isa} = %{version}-%{release}
-BuildRequires: yajl-devel
+Summary:	Ceph plugin for collectd
+Group:		System Environment/Daemons
+Requires:	%{name}%{?_isa} = %{version}-%{release}
+BuildRequires:	yajl-devel
 %description ceph
 Ceph plugin for collectd
 %endif
@@ -375,7 +375,7 @@ statements on a database and read back the result.
 Summary:	disk plugin for collectd
 Group:		System Environment/Daemons
 Requires:	%{name}%{?_isa} = %{version}-%{release}
-%{?_has_libudev:BuildRequires:  libudev-devel}
+%{?_has_libudev:BuildRequires:	libudev-devel}
 %description disk
 The "disk" plugin collects information about the usage of physical disks and
 logical disks (partitions).
@@ -460,10 +460,10 @@ in an embedded JVM.
 
 %if %{with_log_logstash}
 %package log_logstash
-Summary:       log_logstash plugin for collectd
-Group:         System Environment/Daemons
-Requires:      %{name}%{?_isa} = %{version}-%{release}
-BuildRequires: yajl-devel
+Summary:	log_logstash plugin for collectd
+Group:		System Environment/Daemons
+Requires:	%{name}%{?_isa} = %{version}-%{release}
+BuildRequires:	yajl-devel
 %description log_logstash
 This plugin logs in logstash JSON format
 %endif
@@ -503,9 +503,9 @@ consumption from Intel Many Integrated Core (MIC) CPUs.
 
 %if %{with_modbus}
 %package modbus
-Summary:       modbus plugin for collectd
-Group:         System Environment/Daemons
-Requires:      %{name}%{?_isa} = %{version}-%{release}
+Summary:	modbus plugin for collectd
+Group:		System Environment/Daemons
+Requires:	%{name}%{?_isa} = %{version}-%{release}
 BuildRequires:	libmodbus-devel
 %description modbus
 The modbus plugin collects values from Modbus/TCP enabled devices
@@ -576,10 +576,10 @@ This plugin for collectd provides Network UPS Tools support.
 
 %if %{with_openldap}
 %package openldap
-Summary:       Openldap plugin for collectd
-Group:         System Environment/Daemons
-Requires:      %{name}%{?_isa} = %{version}-%{release}
-BuildRequires: openldap-devel
+Summary:	Openldap plugin for collectd
+Group:		System Environment/Daemons
+Requires:	%{name}%{?_isa} = %{version}-%{release}
+BuildRequires:	openldap-devel
 %description openldap
 This plugin reads monitoring information from OpenLDAP\'s cn=Monitor subtree.
 %endif
@@ -639,9 +639,9 @@ Summary:	Python plugin for collectd
 Group:		System Environment/Daemons
 Requires:	%{name}%{?_isa} = %{version}-%{release}
 	%if 0%{?rhel} >= 6
-BuildRequires: python-devel
+BuildRequires:	python-devel
 	%else
-BuildRequires: python26-devel
+BuildRequires:	python26-devel
 	%endif
 %description python
 The Python plugin embeds a Python interpreter into collectd and exposes the
@@ -661,10 +661,10 @@ and collects usage information using the hiredis library.
 
 %if %{with_rrdcached}
 %package rrdcached
-Summary:        RRDCached plugin for collectd
-Group:          System Environment/Daemons
-Requires:       %{name}%{?_isa} = %{version}-%{release}, rrdtool >= 1.4
-BuildRequires:  rrdtool-devel
+Summary:	RRDCached plugin for collectd
+Group:		System Environment/Daemons
+Requires:	%{name}%{?_isa} = %{version}-%{release}, rrdtool >= 1.4
+BuildRequires:	rrdtool-devel
 %description rrdcached
 The RRDCacheD plugin connects to the “RRD caching daemon”, rrdcached and
 submits updates for RRD files to that daemon.
@@ -703,10 +703,10 @@ thermometers, and much more.
 
 %if %{with_smart}
 %package smart
-Summary:       SMART plugin for collectd
-Group:         System Environment/Daemons
-Requires:      %{name}%{?_isa} = %{version}-%{release}
-BuildRequires: libatasmart-devel
+Summary:	SMART plugin for collectd
+Group:		System Environment/Daemons
+Requires:	%{name}%{?_isa} = %{version}-%{release}
+BuildRequires:	libatasmart-devel
 %description smart
 Collect SMART statistics, notably load cycle count, temperature and bad
 sectors.
@@ -765,10 +765,10 @@ using HTTP POST requests.
 
 %if %{with_write_kafka}
 %package write_kafka
-Summary:       Write-kafka plugin for collectd
-Group:         System Environment/Daemons
-Requires:      %{name}%{?_isa} = %{version}-%{release}
-BuildRequires: rdkafka-devel
+Summary:	Write-kafka plugin for collectd
+Group:		System Environment/Daemons
+Requires:	%{name}%{?_isa} = %{version}-%{release}
+BuildRequires:	rdkafka-devel
 %description write_kafka
 The write_kafka plugin sends values to kafka, a distributed messaging system.
 %endif
@@ -797,7 +797,7 @@ The riemann plugin submits values to Riemann, an event stream processor.
 Summary:	Web-based viewer for collectd
 Group:		System Environment/Daemons
 Requires:	%{name}%{?_isa} = %{version}-%{release}
-Requires: httpd
+Requires:	httpd
 %description collection3
 collection3 is a graphing front-end for the RRD files created by and filled
 with collectd. It is written in Perl and should be run as an CGI-script.
@@ -1829,7 +1829,7 @@ fi
 # stop collectd-td only when uninstalling
 if [ $1 -eq 0 ]; then
 	/sbin/service collectd-td stop >/dev/null 2>&1 || :
- 	/sbin/chkconfig --del collectd-td || :
+	/sbin/chkconfig --del collectd-td || :
 fi
 %endif
 
