@@ -76,6 +76,7 @@
 
 # For GCE monitoring, enable a minimal set of plugins
 
+%define with_logfile 0%{!?_without_logfile:1}
 %define with_ping 0%{!?_without_ping:1}
 %define with_tcpconns 0%{!?_without_tcpconns:1}
 %define with_write_grpc 0%{!?_without_write_grpc:1}
@@ -121,7 +122,6 @@
 %define with_java 0%{!?_without_java:0}
 %define with_virt 0%{!?_without_virt:0}
 %define with_load 0%{!?_without_load:0}
-%define with_logfile 0%{!?_without_logfile:0}
 %define with_log_logstash 0%{!?_without_log_logstash:0%{?_has_libyajl}}
 %define with_lvm 0%{!?_without_lvm:0%{?_has_lvm2app_h}}
 %define with_madwifi 0%{!?_without_madwifi:0}
@@ -1744,9 +1744,8 @@ rm -rf %{buildroot}
 %if 0%{?el7:1}
 %{__install} -Dp -m0644 contrib/systemd.collectd.service %{buildroot}%{_unitdir}/collectd.service
 %else
-%{__install} -Dp -m0755 contrib/redhat/init.d-collectd %{buildroot}%{_initrddir}/collectd
+%{__install} -Dp -m0755 contrib/netperf/init.d-collectd-td %{buildroot}%{_initrddir}/collectd-td
 %endif
-%{__install} -Dp -m0644 src/collectd.conf %{buildroot}%{_sysconfdir}/collectd.conf
 %{__install} -d %{buildroot}%{_sharedstatedir}/collectd/
 %{__install} -d %{buildroot}%{_sysconfdir}/collectd.d/
 
@@ -1761,6 +1760,9 @@ rm -rf %{buildroot}
 
 %{__mv} contrib/php-collection %{buildroot}%{_localstatedir}/www
 %{__mv} contrib/redhat/php-collection.conf %{buildroot}/%{_sysconfdir}/httpd/conf.d/
+%{__rm} -f %{buildroot}%{_sysconfdir}/collectd.conf
+
+%{__ln_s} %{_sbindir}/collectd %{buildroot}%{_sbindir}/collectd-td
 
 ### Clean up docs
 find contrib/ -type f -exec %{__chmod} a-x {} \;
@@ -1817,17 +1819,17 @@ if [ $1 -eq 2 ]; then
 fi
 %systemd_post collectd.service
 %else
-/sbin/chkconfig --add collectd || :
+/sbin/chkconfig --add collectd-td || :
 %endif
 
 %preun
 %if 0%{?el7:1}
 %systemd_preun collectd.service
 %else
-# stop collectd only when uninstalling
+# stop collectd-td only when uninstalling
 if [ $1 -eq 0 ]; then
-	/sbin/service collectd stop >/dev/null 2>&1 || :
-	/sbin/chkconfig --del collectd || :
+	/sbin/service collectd-td stop >/dev/null 2>&1 || :
+ 	/sbin/chkconfig --del collectd-td || :
 fi
 %endif
 
@@ -1837,7 +1839,7 @@ fi
 %else
 # restart collectd only when upgrading
 if [ $1 -eq 1 ]; then
-	/sbin/service collectd condrestart >/dev/null 2>&1 || :
+	/sbin/service collectd-td condrestart >/dev/null 2>&1 || :
 fi
 %endif
 
@@ -1847,13 +1849,13 @@ fi
 
 %files
 %doc AUTHORS COPYING ChangeLog README
-%config(noreplace) %{_sysconfdir}/collectd.conf
 %if 0%{?el7:1}
 %{_unitdir}/collectd.service
 %else
-%{_initrddir}/collectd
+%{_initrddir}/collectd-td
 %endif
 %{_sbindir}/collectd
+%{_sbindir}/collectd-td
 %{_sbindir}/collectdmon
 %{_datadir}/collectd/types.db
 %{_sharedstatedir}/collectd

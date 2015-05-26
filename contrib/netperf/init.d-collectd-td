@@ -1,0 +1,72 @@
+#!/bin/bash
+#
+#	/etc/rc.d/init.d/collectd-td
+#
+#	Init script for tcp_diag collectd reporting to Google Cloud
+#	Latency on CentOS6.
+#
+#       Usage:
+#         1. Move this file to /etc/init.d/collectd-td
+#         2. Run: chkconfig --add collectd-td
+#         3.      chkconfig --list collectd-td    # make sure
+#         4.      service collectd-td start
+#
+# description: collectd to report fine-grained TCP statistics to Google \
+#              Cloud Latency.
+# chkconfig: 2345 90 10
+# processname: collectd-td
+
+# Source function library.
+. /etc/init.d/functions
+
+servicename=collectd-td
+dir=/opt/collectd-td
+prog="${dir}/sbin/collectd-td"
+lockfile="/var/lock/subsys/$servicename"
+pidfile="/var/run/${servicename}.pid"
+
+export LD_LIBRARY_PATH=/opt/libgrpc-td/lib/
+
+start() {
+	echo -n "Starting $servicename: "
+        daemon --pidfile "$pidfile" $prog -C $dir/etc/collectd-td.conf
+        RETVAL=$?
+        echo
+	[ $RETVAL -eq 0 ] && touch "$lockfile"
+	return $RETVAL
+}	
+
+stop() {
+	echo -n "Shutting down $servicename: "
+        killproc -p "$pidfile" $prog
+        RETVAL=$?
+        echo
+	[ $RETVAL -eq 0 ] && rm -f "$lockfile"
+	return $RETVAL
+}
+
+case "$1" in
+    start)
+	start
+	;;
+    stop)
+	stop
+	;;
+    status)
+        status -l "$lockfile" -p "$pidfile"
+	;;
+    restart)
+    	stop
+	start
+	;;
+    reload)
+        # collectd doesn't reload config on SIGHUP.  Just restart it.
+        stop
+        start
+	;;
+    *)
+	echo "Usage: <servicename> {start|stop|status|reload|restart"
+	exit 1
+	;;
+esac
+exit $?
