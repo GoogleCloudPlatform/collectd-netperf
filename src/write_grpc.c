@@ -20,6 +20,10 @@
  * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
+ *
+ * Authors:
+ *   Ariel Shaqed (Scolnicov) <arielshaqed+netperf@google.com>
+ *   Yosef Heskia <yosih+netperfgoogle.com>
  */
 
 /*
