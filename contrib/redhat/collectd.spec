@@ -44,6 +44,9 @@
 %define _prefix /opt/collectd-td/
 %define _mandir /opt/collectd-td/share/man/
 %define _docdir /opt/collectd-td/share/doc/
+# sysconfdir ends up in /etc/, fix things explicitly
+%define _sysconfdir /opt/collectd-td/etc/
+%define _initrddir /etc/rc.d/init.d/
 
 # plugins only buildable on RHEL6
 # (NB: %{elN} macro is not available on RHEL < 6)
@@ -1849,6 +1852,7 @@ fi
 
 %files
 %doc AUTHORS COPYING ChangeLog README
+%config(noreplace) %{_sysconfdir}/collectd-td.conf
 %if 0%{?el7:1}
 %{_unitdir}/collectd.service
 %else
