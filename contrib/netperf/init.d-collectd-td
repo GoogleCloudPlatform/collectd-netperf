@@ -29,7 +29,7 @@ export LD_LIBRARY_PATH=/opt/libgrpc-td/lib/
 
 start() {
 	echo -n "Starting $servicename: "
-        daemon --pidfile "$pidfile" $prog -C $dir/etc/collectd-td.conf
+        MALLOC_ARENA_MAX=1 daemon --pidfile "$pidfile" $prog -C $dir/etc/collectd-td.conf
         RETVAL=$?
         echo
 	[ $RETVAL -eq 0 ] && touch "$lockfile"
