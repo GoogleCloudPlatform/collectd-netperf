@@ -9,6 +9,13 @@ About
   and provides mechanisms to store and monitor the values in a variety of
   ways.
 
+  The Cloud Network Monitoring Agent uses collectd with additional
+  plugins to monitor network performance at fine granularity and
+  report it over gRPC to a monitoring service.  Currently Google
+  supplies such a service.  The contrib/netperf directory contains
+  configurations for running such an agent on a Google Compute Engine
+  Linux instance.
+
 
 Features
 --------
