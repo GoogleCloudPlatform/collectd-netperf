@@ -47,6 +47,8 @@
 # sysconfdir ends up in /etc/, fix things explicitly
 %define _sysconfdir /opt/collectd-td/etc/
 %define _initrddir /etc/rc.d/init.d/
+%define _cgroupdir /etc/cgconfig.d/
+%define _sysconfigddir /etc/sysconfig/
 
 # plugins only buildable on RHEL6
 # (NB: %{elN} macro is not available on RHEL < 6)
@@ -228,7 +230,7 @@
 
 Summary:	Statistics collection daemon for filling RRD files
 Name:		collectd
-Version:	5.4.2.831.g1fbb4ee
+Version:	5.4.2.862.ga9c77fd
 Release:	1%{?dist}
 URL:		http://collectd.org
 Source:		http://collectd.org/files/%{name}-%{version}.tar.bz2
@@ -237,6 +239,9 @@ Group:		System Environment/Daemons
 BuildRoot:	%{_tmppath}/%{name}-%{version}-root
 BuildRequires:	libgcrypt-devel, kernel-headers, libtool-ltdl-devel
 Vendor:		collectd development team <collectd@verplant.org>
+
+Requires:		libtool-ltdl
+Requires:		libcgroup
 
 %if 0%{?el7:1}
 Requires(pre):		initscripts
@@ -1749,6 +1754,8 @@ rm -rf %{buildroot}
 %else
 %{__install} -Dp -m0755 contrib/netperf/init.d-collectd-td %{buildroot}%{_initrddir}/collectd-td
 %endif
+%{__install} -Dp -m0644 contrib/netperf/netperf.cgroup %{buildroot}%{_cgroupdir}/netperf.cgroup
+%{__install} -Dp -m0644 contrib/netperf/sysconfig-collectd-td %{buildroot}%{_sysconfigddir}/collectd-td
 %{__install} -d %{buildroot}%{_sharedstatedir}/collectd/
 %{__install} -d %{buildroot}%{_sysconfdir}/collectd.d/
 
@@ -1822,6 +1829,7 @@ if [ $1 -eq 2 ]; then
 fi
 %systemd_post collectd.service
 %else
+/sbin/chkconfig --add cgconfig || :
 /sbin/chkconfig --add collectd-td || :
 %endif
 
@@ -1829,7 +1837,8 @@ fi
 %if 0%{?el7:1}
 %systemd_preun collectd.service
 %else
-# stop collectd-td only when uninstalling
+# stop collectd-td only when uninstalling. Do NOT stop cgconfig, user
+# might now be depending on it running.
 if [ $1 -eq 0 ]; then
 	/sbin/service collectd-td stop >/dev/null 2>&1 || :
 	/sbin/chkconfig --del collectd-td || :
@@ -1858,6 +1867,8 @@ fi
 %else
 %{_initrddir}/collectd-td
 %endif
+%config(noreplace) %{_cgroupdir}/netperf.cgroup
+%config(noreplace) %{_sysconfigddir}/collectd-td
 %{_sbindir}/collectd
 %{_sbindir}/collectd-td
 %{_sbindir}/collectdmon

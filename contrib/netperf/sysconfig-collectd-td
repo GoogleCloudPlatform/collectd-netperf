@@ -1,0 +1,1 @@
+CGROUP_DAEMON='cpu:daemons/netperf memory:daemons/netperf'

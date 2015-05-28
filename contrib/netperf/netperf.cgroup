@@ -1,0 +1,16 @@
+# cgroups configuration for running Network Performance Monitoring Agent daemon
+#
+# Change to this file take effect after you run "service cgconfig restart".
+
+# Inherit properties from daemons, if relevant
+group daemons/netperf {
+    cpu {
+        cpu.cfs_quota_us =    "1500";
+	cpu.cfs_period_us = "100000";
+    }
+    memory {
+        memory.limit_in_bytes = "180m";
+        memory.memsw.limit_in_bytes = "180m";
+        memory.oom_control = "0";
+    }
+}

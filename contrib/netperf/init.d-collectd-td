@@ -19,17 +19,18 @@
 # Source function library.
 . /etc/init.d/functions
 
+# Configuration
+. /etc/sysconfig/collectd-td
+
 servicename=collectd-td
 dir=/opt/collectd-td
 prog="${dir}/sbin/collectd-td"
 lockfile="/var/lock/subsys/$servicename"
 pidfile="/var/run/${servicename}.pid"
 
-export LD_LIBRARY_PATH=/opt/libgrpc-td/lib/
-
 start() {
 	echo -n "Starting $servicename: "
-        MALLOC_ARENA_MAX=1 daemon --pidfile "$pidfile" $prog -C $dir/etc/collectd-td.conf
+        MALLOC_ARENA_MAX=1 daemon --pidfile "$pidfile" LD_LIBRARY_PATH=/opt/libgrpc-td/lib/ $prog -C $dir/etc/collectd-td.conf
         RETVAL=$?
         echo
 	[ $RETVAL -eq 0 ] && touch "$lockfile"
