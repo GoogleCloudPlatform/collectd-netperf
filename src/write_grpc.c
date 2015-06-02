@@ -490,7 +490,7 @@ static size_t make_call_ops(
 static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
   slice_and_offset_t stream_state;
   pb_ostream_t stream;
-  gpr_slice slice = {0};
+  gpr_slice slice = gpr_empty_slice();
   gpr_slice slice_out;
   grpc_byte_buffer* byte_buffer = NULL;
   grpc_op ops[10];
