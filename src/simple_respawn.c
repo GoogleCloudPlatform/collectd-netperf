@@ -21,67 +21,6 @@
 static const char *progname;
 static FILE *log_fp;
 
-/* Fake implementations for some functions defined in common.c */
-/* Even though Posix requires "strerror_r" to return an "int",
- * some systems (e.g. the GNU libc) return a "char *" _and_
- * ignore the second argument ... -tokkee */
-char *sstrerror (int errnum, char *buf, size_t buflen)
-{
-        buf[0] = '\0';
-
-#if !HAVE_STRERROR_R
-        {
-                char *temp;
-
-                pthread_mutex_lock (&strerror_r_lock);
-
-                temp = strerror (errnum);
-                sstrncpy (buf, temp, buflen);
-
-                pthread_mutex_unlock (&strerror_r_lock);
-        }
-/* #endif !HAVE_STRERROR_R */
-
-#elif STRERROR_R_CHAR_P
-        {
-                char *temp;
-                temp = strerror_r (errnum, buf, buflen);
-                if (buf[0] == '\0')
-                {
-                        if ((temp != NULL) && (temp != buf) && (temp[0] != '\0'))
-                                sstrncpy (buf, temp, buflen);
-                        else
-                                sstrncpy (buf, "strerror_r did not return "
-                                                "an error message", buflen);
-                }
-        }
-/* #endif STRERROR_R_CHAR_P */
-
-#else
-        if (strerror_r (errnum, buf, buflen) != 0)
-        {
-                ssnprintf (buf, buflen, "Error #%i; "
-                                "Additionally, strerror_r failed.",
-                                errnum);
-        }
-#endif /* STRERROR_R_CHAR_P */
-
-        return (buf);
-} /* char *sstrerror */
-
-int ssnprintf (char *dest, size_t n, const char *format, ...)
-{
-        int ret = 0;
-        va_list ap;
-
-        va_start (ap, format);
-        ret = vsnprintf (dest, n, format, ap);
-        dest[n - 1] = '\0';
-        va_end (ap);
-
-        return (ret);
-} /* int ssnprintf */
-
 void plugin_log(int level, char const *format, ...)
 {
   char buffer[1024];
@@ -112,7 +51,12 @@ void plugin_log(int level, char const *format, ...)
       level_str = "[] ";
   }
 
-  fprintf(log_fp, "%s %s: %s\n", level_str, timestamp_str, buffer);
+  fprintf(log_fp, "[%s] %s%s\n", timestamp_str, level_str, buffer);
+}
+
+gauge_t *uc_get_rate (const data_set_t *ds, const value_list_t *vl)
+{
+  return (NULL);
 }
 
 static void usage()
@@ -152,6 +96,11 @@ int main(int argc, char *argv[])
 
   while (argc > 1 && *argv[1] == '-') {
     if (strcmp(argv[1], "-l") == 0) {
+      if (log_fp != stderr) {
+        ERROR("%s: Trying to set more than one logfile; opening (only) %s",
+              progname, argv[2]);
+        fclose(log_fp);
+      }
       if (!(log_fp = fopen(argv[2], "a"))) {
         ERROR("%s: Opening \"%s\" for append: %s",
               progname, argv[2], strerror(errno));
@@ -202,8 +151,8 @@ int main(int argc, char *argv[])
            CDTIME_T_TO_DOUBLE(current_sleep));
       usleep(CDTIME_T_TO_US(current_sleep));
     } else {
-      interval_secs = DOUBLE_TO_CDTIME_T(1.0);
-      INFO("No sleeping before next respawn");
+      current_sleep = DOUBLE_TO_CDTIME_T(1.0);
+      INFO("No sleeping before next respawn, and reset sleep");
     }
   }
 

@@ -39,7 +39,7 @@ if BUILD_AIX
 collectd_nagios_LDADD += -lm
 endif
 
-collectd_nagios_LDADD += libcollectdclient/libcollectdclient.la 
+collectd_nagios_LDADD += libcollectdclient/libcollectdclient.la
 collectd_nagios_DEPENDENCIES = libcollectdclient/libcollectdclient.la
 
 
@@ -74,7 +74,7 @@ endif
 collectd_tg_LDADD += libcollectdclient/libcollectdclient.la
 collectd_tg_DEPENDENCIES = libcollectdclient/libcollectdclient.la
 
-simple_respawn_SOURCES = simple_respawn.c daemon/utils_time.c
+simple_respawn_SOURCES = simple_respawn.c daemon/utils_time.c daemon/common.c
 simple_respawn_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/src/libcollectdclient/collectd -I$(top_builddir)/src/libcollectdclient/collectd
 simple_respawn_LDADD = libcollectdclient/libcollectdclient.la
 simple_respawn_DEPENDENCIES = libcollectdclient/libcollectdclient.la
