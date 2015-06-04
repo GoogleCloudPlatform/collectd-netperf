@@ -22,6 +22,9 @@
 static const char *progname;
 static FILE *log_fp;
 
+static const char *respawn_pidfile = NULL;
+static const char *program_pidfile = NULL;
+
 void plugin_log(int level, char const *format, ...)
 {
   char buffer[1024];
@@ -67,7 +70,12 @@ gauge_t *uc_get_rate (const data_set_t *ds, const value_list_t *vl)
 
 static void usage()
 {
-  fprintf(stderr, "Usage: %s [-l logfile] command args...\n",
+  fprintf(stderr, "Usage: %s [-d] [-l logfile] command args...\n"
+          "Options:\n"
+          "    -d                      daemonize\n"
+          "    -l logfile              write logs to logfile (not stderr)\n"
+          "    -respawn_pidfile pid1   write respawn process PID to pid1\n"
+          "    -program_pidfile pid2   write supervised PID to pid2\n",
           progname);
 }
 
@@ -87,6 +95,18 @@ static int detach_daemon()
   }
 }
 
+static void write_pid(const char *pidfile, pid_t pid)
+{
+  FILE *fp;
+  if ((fp = fopen(pidfile, "w")) == NULL) {
+    ERROR("Cannot write PIDFile %s: %s", pidfile, strerror(errno));
+  }
+  fprintf(fp, "%d\n", (int) pid);
+  if (fclose(fp)) {
+    ERROR("Cannot close PIDFile %s: %s", pidfile, strerror(errno));
+  }
+}
+
 static int try_run(char *argv[])
 {
   int status;
@@ -102,9 +122,18 @@ static int try_run(char *argv[])
     /* Still here? An error occurred! */
     ERROR("execvp %s: %s", argv[0], strerror(errno));
     exit(-1);
+  } else {
+    INFO("Spawned process %d", pid);
   }
+  write_pid(program_pidfile, pid);
   waitpid(pid, &status, 0);
   return status;
+}
+
+static void delete_pidfiles(void)
+{
+  unlink(respawn_pidfile);
+  unlink(program_pidfile);
 }
 
 int main(int argc, char *argv[])
@@ -132,6 +161,12 @@ int main(int argc, char *argv[])
       argv++, argc--;
     } else if (strcmp(argv[1], "-d") == 0) {
       daemonize = 1;
+    } else if (strcmp(argv[1], "-respawn_pidfile") == 0) {
+      respawn_pidfile = argv[2];
+      argv++, argc--;
+    } else if (strcmp(argv[1], "-program_pidfile") == 0) {
+      program_pidfile = argv[2];
+      argv++, argc--;
     } else {
       fprintf(stderr, "%s: Unknown switch %s\n", progname, argv[1]);
       usage();
@@ -154,6 +189,10 @@ int main(int argc, char *argv[])
     }
     /* Returns only in daemon */
   }
+
+  /* If daemonizing, delete PID files once daemon exits */
+  atexit(delete_pidfiles);
+  write_pid(respawn_pidfile, getpid());
 
   current_sleep = DOUBLE_TO_CDTIME_T(1.0);
   for (;;) {  /* Exit in loop */
