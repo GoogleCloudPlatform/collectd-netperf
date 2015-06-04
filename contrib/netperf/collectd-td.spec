@@ -230,7 +230,7 @@
 
 Summary:	Statistics collection daemon for filling RRD files
 Name:		collectd
-Version:	5.4.2.862.ga9c77fd
+Version:	5.4.2.872.g2e68987
 Release:	1%{?dist}
 URL:		http://collectd.org
 Source:		http://collectd.org/files/%{name}-%{version}.tar.bz2
@@ -1872,6 +1872,7 @@ fi
 %{_sbindir}/collectd
 %{_sbindir}/collectd-td
 %{_sbindir}/collectdmon
+%{_bindir}/simple_respawn
 %{_datadir}/collectd/types.db
 %{_sharedstatedir}/collectd
 %{_mandir}/man1/collectd.1*

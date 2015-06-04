@@ -16,6 +16,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 static const char *progname;
@@ -26,9 +27,14 @@ void plugin_log(int level, char const *format, ...)
   char buffer[1024];
   va_list ap;
   const char *level_str;
+  struct tm timestamp_tm;
   char timestamp_str[64];
+  time_t tt = time(NULL);
 
-  cdtime_to_iso8601(timestamp_str, sizeof(timestamp_str), cdtime());
+  localtime_r(&tt, &timestamp_tm);
+  strftime(timestamp_str, sizeof(timestamp_str),
+           "%Y-%m-%d %H:%M:%S", &timestamp_tm);
+  timestamp_str[sizeof(timestamp_str)-1] = '\0';
 
   va_start(ap, format);
   vsnprintf(buffer, sizeof(buffer), format, ap);
@@ -65,6 +71,22 @@ static void usage()
           progname);
 }
 
+static int detach_daemon()
+{
+  /* Do not use daemonize(3), not all UN*Xes have it */
+  pid_t pid;
+  pid = fork();
+  if (pid < 0) {
+    ERROR("daemonize fork(): %s", strerror(errno));
+    return -1;
+  } else if (pid > 0) {
+    INFO("daemonized to process %d", pid);
+    exit(0);
+  } else {
+    return 0;
+  }
+}
+
 static int try_run(char *argv[])
 {
   int status;
@@ -88,6 +110,7 @@ static int try_run(char *argv[])
 int main(int argc, char *argv[])
 {
   int rc;
+  int daemonize = 0;
   cdtime_t current_sleep;
   double interval_secs;
 
@@ -107,6 +130,8 @@ int main(int argc, char *argv[])
         return -1;
       }
       argv++, argc--;
+    } else if (strcmp(argv[1], "-d") == 0) {
+      daemonize = 1;
     } else {
       fprintf(stderr, "%s: Unknown switch %s\n", progname, argv[1]);
       usage();
@@ -120,6 +145,14 @@ int main(int argc, char *argv[])
     fprintf(stderr, "Missing command\n");
     usage();
     return -3;
+  }
+
+  if (daemonize) {
+    if (detach_daemon() < 0) {
+      /* Error already logged */
+      return 1;
+    }
+    /* Returns only in daemon */
   }
 
   current_sleep = DOUBLE_TO_CDTIME_T(1.0);

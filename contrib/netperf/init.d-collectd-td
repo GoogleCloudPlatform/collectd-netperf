@@ -24,13 +24,17 @@
 
 servicename=collectd-td
 dir=/opt/collectd-td
+respawn="${dir}/bin/simple_respawn"
 prog="${dir}/sbin/collectd-td"
+logfile="/var/log/collectd-td.log"
 lockfile="/var/lock/subsys/$servicename"
 pidfile="/var/run/${servicename}.pid"
 
 start() {
+	local cmd="$prog -f -C $dir/etc/collectd-td.conf"
+        local vars="MALLOC_ARENA_MAX=1 LD_LIBRARY_PATH=/opt/libgrpc-td/lib"
 	echo -n "Starting $servicename: "
-        MALLOC_ARENA_MAX=1 daemon --pidfile "$pidfile" LD_LIBRARY_PATH=/opt/libgrpc-td/lib/ $prog -C $dir/etc/collectd-td.conf
+        $vars daemon --pidfile "$pidfile" $respawn -l $logfile $cmd
         RETVAL=$?
         echo
 	[ $RETVAL -eq 0 ] && touch "$lockfile"
