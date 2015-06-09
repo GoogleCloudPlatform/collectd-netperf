@@ -56,11 +56,11 @@ typedef struct grpc_callback {
   grpc_completion_queue *cq;
   size_t write_counter;
   size_t write_accepted_counter;
-  double deadline;
-  double data_flush_interval;
-  double last_flush_start_time;
-  double log_summary_interval;
-  double last_log_summary_time;
+  cdtime_t deadline;
+  cdtime_t data_flush_interval;
+  cdtime_t last_flush_start_time;
+  cdtime_t log_summary_interval;
+  cdtime_t last_log_summary_time;
   uint64_t total_reports_sent;
   uint64_t total_reports_failed;
   uint64_t values_successfully_reported_since_last_log;
@@ -366,13 +366,18 @@ static bool slice_and_offset_ostream_callback(
   return true;
 }
 
-/* Returns a deadline secs into the future */
-static gpr_timespec get_deadline(double secs)
+/* Returns a deadline timestamp with delay time into the future */
+static gpr_timespec get_deadline(cdtime_t delay)
 {
-  const time_t now = time(NULL);
-  gpr_timespec ret = {0};
-  ret.tv_sec = now + secs;
-  ret.tv_nsec = (secs - (time_t)secs) * 1e9;
+  struct timespec ts_now;
+  struct timespec ts_delay;
+  gpr_timespec ret;
+
+  CDTIME_T_TO_TIMESPEC(cdtime(), &ts_now);
+  CDTIME_T_TO_TIMESPEC(delay, &ts_delay);
+  ret.tv_sec = ts_now.tv_sec + ts_delay.tv_sec +
+      (ts_now.tv_nsec + ts_delay.tv_nsec) / 1000000000;
+  ret.tv_nsec = (ts_now.tv_nsec + ts_delay.tv_nsec) % 1000000000;
   return ret;
 }
 
@@ -507,12 +512,12 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
   size_t buffer_alloc_size;
   size_t i;
   size_t encoded_stats_end = 0;
-  double current_time;
+  cdtime_t current_time;
   uint64_t bytes_to_report = 0;
   _Bool report_skipped = 1;
   int rc = 0;
 
-  cb->last_flush_start_time = CDTIME_T_TO_DOUBLE(cdtime());
+  cb->last_flush_start_time = cdtime();
 
   if (cb->next_index == 0) {
     goto exit;
@@ -638,37 +643,37 @@ exit:
   cb->next_index -= encoded_stats_end;
 
   /* Handle summary logging */
-  if (cb->log_summary_interval >= 0) {
-    if (rc == 0) {
-      if (!report_skipped) cb->total_reports_sent++;
-      cb->values_successfully_reported_since_last_log += encoded_stats_end;
-      cb->bytes_successfully_reported_since_last_log += bytes_to_report;
-    } else {
-      cb->total_reports_failed++;
-      cb->values_failed_to_report_since_last_log += encoded_stats_end;
-      cb->bytes_failed_to_report_since_last_log += bytes_to_report;
-    }
-    current_time = CDTIME_T_TO_DOUBLE(cdtime());
-    if (current_time - cb->last_log_summary_time >= cb->log_summary_interval) {
-      INFO("write_grpc: Summary of operations in last %.3fs: Successfully sent"
-           " %" PRIu64 " AggregatedStats with %" PRIu64 " Stats, encoded as %"
-           PRIu64 " bytes. Failed sending %" PRIu64 " AggregatedStats with %"
-           PRIu64 " Stats, encoded as %" PRIu64 " bytes.",
-           current_time - cb->last_log_summary_time,
-           cb->total_reports_sent,
-           cb->values_successfully_reported_since_last_log,
-           cb->bytes_successfully_reported_since_last_log,
-           cb->total_reports_failed,
-           cb->values_failed_to_report_since_last_log,
-           cb->bytes_failed_to_report_since_last_log);
-      cb->last_log_summary_time = current_time;
-      cb->values_successfully_reported_since_last_log = 0;
-      cb->bytes_successfully_reported_since_last_log = 0;
-      cb->values_failed_to_report_since_last_log = 0;
-      cb->bytes_failed_to_report_since_last_log = 0;
-      cb->total_reports_sent = 0;
-      cb->total_reports_failed = 0;
-    }
+  if (rc == 0) {
+    if (!report_skipped) cb->total_reports_sent++;
+    cb->values_successfully_reported_since_last_log += encoded_stats_end;
+    cb->bytes_successfully_reported_since_last_log += bytes_to_report;
+  } else {
+    cb->total_reports_failed++;
+    cb->values_failed_to_report_since_last_log += encoded_stats_end;
+    cb->bytes_failed_to_report_since_last_log += bytes_to_report;
+  }
+  current_time = cdtime();
+  /* NOTE: On default (logging disabled) cb->log_summary_interval is maximum
+   * possible cdtime_t, thus actual logging is practically disabled. */
+  if (current_time - cb->last_log_summary_time > cb->log_summary_interval) {
+    INFO("write_grpc: Summary of operations in last %.3fs: Successfully sent"
+         " %" PRIu64 " AggregatedStats with %" PRIu64 " Stats, encoded as %"
+         PRIu64 " bytes. Failed sending %" PRIu64 " AggregatedStats with %"
+         PRIu64 " Stats, encoded as %" PRIu64 " bytes.",
+         CDTIME_T_TO_DOUBLE(current_time - cb->last_log_summary_time),
+         cb->total_reports_sent,
+         cb->values_successfully_reported_since_last_log,
+         cb->bytes_successfully_reported_since_last_log,
+         cb->total_reports_failed,
+         cb->values_failed_to_report_since_last_log,
+         cb->bytes_failed_to_report_since_last_log);
+    cb->last_log_summary_time = current_time;
+    cb->values_successfully_reported_since_last_log = 0;
+    cb->bytes_successfully_reported_since_last_log = 0;
+    cb->values_failed_to_report_since_last_log = 0;
+    cb->bytes_failed_to_report_since_last_log = 0;
+    cb->total_reports_sent = 0;
+    cb->total_reports_failed = 0;
   }
 
   return rc;
@@ -677,21 +682,20 @@ exit:
 static void *flush_data_thread(void *arg)
 {
   grpc_callback *cb = arg;
-  useconds_t usec_to_sleep = cb->data_flush_interval * 1e6;
-  double time_from_last_flush;
+  cdtime_t sleep_time = cb->data_flush_interval;
+  cdtime_t time_from_last_flush;
 
   while (1) {
-    usleep(usec_to_sleep);
+    usleep(CDTIME_T_TO_US(sleep_time));
     gpr_mu_lock(&cb->mutex);
-    time_from_last_flush =
-        CDTIME_T_TO_DOUBLE(cdtime()) - cb->last_flush_start_time;
+    time_from_last_flush = cdtime() - cb->last_flush_start_time;
     if (time_from_last_flush < cb->data_flush_interval) {
       /* Skip flush, too close to last flush */
-      usec_to_sleep = (cb->data_flush_interval - time_from_last_flush) * 1e6;
+      sleep_time = cb->data_flush_interval - time_from_last_flush;
     } else {
       do_flush_nolock(cb, 0);
       /* Set clock for full data flush interval */
-      usec_to_sleep = cb->data_flush_interval * 1e6;
+      sleep_time = cb->data_flush_interval;
     }
     gpr_mu_unlock(&cb->mutex);
   }
@@ -905,22 +909,22 @@ static int load_config(oconfig_item_t *ci)
   cb->cq = NULL;
   cb->write_counter = 0;
   cb->write_accepted_counter = 0;
-  cb->deadline = 20.0;
-  cb->data_flush_interval = DEFAULT_FLUSH_INTERVAL_SECONDS;
+  cb->deadline = DOUBLE_TO_CDTIME_T(20.0);
+  cb->data_flush_interval = DOUBLE_TO_CDTIME_T(DEFAULT_FLUSH_INTERVAL_SECONDS);
   cb->flush_thread_started = false;
   cb->next_index = 0;
   cb->encoded_stats = NULL;
   cb->max_num_encoded_stats = DEFAULT_MAX_STATS_NUM_IN_BATCH;
-  cb->last_flush_start_time = CDTIME_T_TO_DOUBLE(cdtime());
-  cb->log_summary_interval = -1;
-  cb->last_log_summary_time = 0;
+  cb->last_flush_start_time = cdtime();
+  /* Equals max value of cdtime_t */
+  cb->log_summary_interval = (cdtime_t) -1;
+  cb->last_log_summary_time = CDTIME_T_TO_DOUBLE(cdtime());
   cb->values_successfully_reported_since_last_log = 0;
   cb->values_failed_to_report_since_last_log = 0;
   cb->bytes_successfully_reported_since_last_log = 0;
   cb->bytes_failed_to_report_since_last_log = 0;
   cb->total_reports_sent = 0;
   cb->total_reports_failed = 0;
-  cb->last_log_summary_time = CDTIME_T_TO_DOUBLE(cdtime());
 
   for (i = 0; i < ci->children_num; i++) {
     oconfig_item_t *child = &ci->children[i];
@@ -958,13 +962,13 @@ static int load_config(oconfig_item_t *ci)
       }
     }
     else if (STR_EQ(child->key, "Deadline")) {
-      if (cf_util_get_double(child, &cb->deadline)) {
+      if (cf_util_get_cdtime(child, &cb->deadline)) {
         ERROR("Bad Deadline value");
         goto exit;
       }
     }
     else if (STR_EQ(child->key, "DataFlushInterval")) {
-      if (cf_util_get_double(child, &cb->data_flush_interval)) {
+      if (cf_util_get_cdtime(child, &cb->data_flush_interval)) {
         ERROR("Bad DataFlushInterval value");
         goto exit;
       }
@@ -979,7 +983,7 @@ static int load_config(oconfig_item_t *ci)
       cb->max_num_encoded_stats = max_num_encoded_stats;
     }
     else if (STR_EQ(child->key, "LogSummaryInterval")) {
-      if (cf_util_get_double(child, &cb->log_summary_interval)) {
+      if (cf_util_get_cdtime(child, &cb->log_summary_interval)) {
         ERROR("Bad LogSummaryInterval value");
         goto exit;
       }
