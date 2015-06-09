@@ -16,19 +16,28 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 static const char *progname;
 static FILE *log_fp;
+
+static const char *respawn_pidfile = NULL;
+static const char *program_pidfile = NULL;
 
 void plugin_log(int level, char const *format, ...)
 {
   char buffer[1024];
   va_list ap;
   const char *level_str;
+  struct tm timestamp_tm;
   char timestamp_str[64];
+  time_t tt = time(NULL);
 
-  cdtime_to_iso8601(timestamp_str, sizeof(timestamp_str), cdtime());
+  localtime_r(&tt, &timestamp_tm);
+  strftime(timestamp_str, sizeof(timestamp_str),
+           "%Y-%m-%d %H:%M:%S", &timestamp_tm);
+  timestamp_str[sizeof(timestamp_str)-1] = '\0';
 
   va_start(ap, format);
   vsnprintf(buffer, sizeof(buffer), format, ap);
@@ -61,8 +70,41 @@ gauge_t *uc_get_rate (const data_set_t *ds, const value_list_t *vl)
 
 static void usage()
 {
-  fprintf(stderr, "Usage: %s [-l logfile] command args...\n",
+  fprintf(stderr, "Usage: %s [-d] [-l logfile] command args...\n"
+          "Options:\n"
+          "    -d                      daemonize\n"
+          "    -l logfile              write logs to logfile (not stderr)\n"
+          "    -respawn_pidfile pid1   write respawn process PID to pid1\n"
+          "    -program_pidfile pid2   write supervised PID to pid2\n",
           progname);
+}
+
+static int detach_daemon()
+{
+  /* Do not use daemonize(3), not all UN*Xes have it */
+  pid_t pid;
+  pid = fork();
+  if (pid < 0) {
+    ERROR("daemonize fork(): %s", strerror(errno));
+    return -1;
+  } else if (pid > 0) {
+    INFO("daemonized to process %d", pid);
+    exit(0);
+  } else {
+    return 0;
+  }
+}
+
+static void write_pid(const char *pidfile, pid_t pid)
+{
+  FILE *fp;
+  if ((fp = fopen(pidfile, "w")) == NULL) {
+    ERROR("Cannot write PIDFile %s: %s", pidfile, strerror(errno));
+  }
+  fprintf(fp, "%d\n", (int) pid);
+  if (fclose(fp)) {
+    ERROR("Cannot close PIDFile %s: %s", pidfile, strerror(errno));
+  }
 }
 
 static int try_run(char *argv[])
@@ -80,14 +122,24 @@ static int try_run(char *argv[])
     /* Still here? An error occurred! */
     ERROR("execvp %s: %s", argv[0], strerror(errno));
     exit(-1);
+  } else {
+    INFO("Spawned process %d", pid);
   }
+  write_pid(program_pidfile, pid);
   waitpid(pid, &status, 0);
   return status;
+}
+
+static void delete_pidfiles(void)
+{
+  unlink(respawn_pidfile);
+  unlink(program_pidfile);
 }
 
 int main(int argc, char *argv[])
 {
   int rc;
+  int daemonize = 0;
   cdtime_t current_sleep;
   double interval_secs;
 
@@ -107,6 +159,14 @@ int main(int argc, char *argv[])
         return -1;
       }
       argv++, argc--;
+    } else if (strcmp(argv[1], "-d") == 0) {
+      daemonize = 1;
+    } else if (strcmp(argv[1], "-respawn_pidfile") == 0) {
+      respawn_pidfile = argv[2];
+      argv++, argc--;
+    } else if (strcmp(argv[1], "-program_pidfile") == 0) {
+      program_pidfile = argv[2];
+      argv++, argc--;
     } else {
       fprintf(stderr, "%s: Unknown switch %s\n", progname, argv[1]);
       usage();
@@ -121,6 +181,18 @@ int main(int argc, char *argv[])
     usage();
     return -3;
   }
+
+  if (daemonize) {
+    if (detach_daemon() < 0) {
+      /* Error already logged */
+      return 1;
+    }
+    /* Returns only in daemon */
+  }
+
+  /* If daemonizing, delete PID files once daemon exits */
+  atexit(delete_pidfiles);
+  write_pid(respawn_pidfile, getpid());
 
   current_sleep = DOUBLE_TO_CDTIME_T(1.0);
   for (;;) {  /* Exit in loop */
