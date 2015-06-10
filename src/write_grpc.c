@@ -911,7 +911,7 @@ static int load_config(oconfig_item_t *ci)
   cb->last_flush_start_time = cdtime();
   /* Equals max value of cdtime_t */
   cb->log_summary_interval = (cdtime_t) -1;
-  cb->last_log_summary_time = CDTIME_T_TO_DOUBLE(cdtime());
+  cb->last_log_summary_time = cdtime();
   cb->values_successfully_reported_since_last_log = 0;
   cb->values_failed_to_report_since_last_log = 0;
   cb->bytes_successfully_reported_since_last_log = 0;
