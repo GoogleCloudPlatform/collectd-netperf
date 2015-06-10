@@ -366,18 +366,11 @@ static bool slice_and_offset_ostream_callback(
   return true;
 }
 
-/* Returns a deadline timestamp with delay time into the future */
+/* Returns a deadline timespec with delay time into the future */
 static gpr_timespec get_deadline(cdtime_t delay)
 {
-  struct timespec ts_now;
-  struct timespec ts_delay;
   gpr_timespec ret;
-
-  CDTIME_T_TO_TIMESPEC(cdtime(), &ts_now);
-  CDTIME_T_TO_TIMESPEC(delay, &ts_delay);
-  ret.tv_sec = ts_now.tv_sec + ts_delay.tv_sec +
-      (ts_now.tv_nsec + ts_delay.tv_nsec) / 1000000000;
-  ret.tv_nsec = (ts_now.tv_nsec + ts_delay.tv_nsec) % 1000000000;
+  CDTIME_T_TO_TIMESPEC(cdtime() + delay, &ret);
   return ret;
 }
 
