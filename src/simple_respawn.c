@@ -130,6 +130,7 @@ static int try_run(char *argv[])
   }
   write_pid(program_pidfile, pid);
   waitpid(pid, &status, 0);
+  child_pid = 0;
   return status;
 }
 
@@ -142,7 +143,9 @@ static void delete_pidfiles(void)
 /* Signal handler: Kills child and exits; does not attempt to report errors */
 static void kill_child(int signum_ignored)
 {
-  kill(child_pid, SIGTERM);
+  if (child_pid > 0)
+    kill(child_pid, SIGTERM);
+  child_pid = 0;
   delete_pidfiles();
   /* Do NOT call atexit() handlers, flush files, etc. */
   _exit(1);
