@@ -24,7 +24,7 @@ AM_CPPFLAGS += -DPKGDATADIR='"${pkgdatadir}"'
 AUTOMAKE_OPTIONS = subdir-objects
 
 sbin_PROGRAMS = collectdmon
-bin_PROGRAMS = collectd-nagios collectdctl collectd-tg
+bin_PROGRAMS = collectd-nagios collectdctl collectd-tg simple_respawn
 
 collectdmon_SOURCES = collectdmon.c
 collectdmon_CPPFLAGS = $(AM_CPPFLAGS)
@@ -74,6 +74,13 @@ endif
 collectd_tg_LDADD += libcollectdclient/libcollectdclient.la
 collectd_tg_DEPENDENCIES = libcollectdclient/libcollectdclient.la
 
+simple_respawn_SOURCES = simple_respawn.c daemon/utils_time.c daemon/common.c
+simple_respawn_CPPFLAGS = $(AM_CPPFLAGS) -I$(top_srcdir)/src/libcollectdclient/collectd -I$(top_builddir)/src/libcollectdclient/collectd
+simple_respawn_LDADD =
+if BUILD_WITH_LIBRT
+simple_respawn_LDADD += -lrt
+endif
+simple_respawn_DEPENDENCIES = libcollectdclient/libcollectdclient.la
 
 pkglib_LTLIBRARIES =
 
@@ -1365,6 +1372,9 @@ EXTRA_DIST += grpc_data.proto grpc_updater.proto		\
 	nanopb/generator/proto/plugin.proto			\
 	nanopb/generator/protoc-gen-nanopb			\
 	nanopb/generator/protoc-gen-nanopb.bat
+
+# Safe integer ops (used for TCPConns and write_grpc).
+EXTRA_DIST += safe_iop.h
 
 if HAVE_PROTOC_C
 CLEANFILES += grpc_data.pb.c grpc_data.pb.h
