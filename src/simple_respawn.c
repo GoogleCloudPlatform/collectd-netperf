@@ -25,6 +25,8 @@ static FILE *log_fp;
 static const char *respawn_pidfile = NULL;
 static const char *program_pidfile = NULL;
 
+static pid_t child_pid = 0;
+
 void plugin_log(int level, char const *format, ...)
 {
   char buffer[1024];
@@ -123,6 +125,7 @@ static int try_run(char *argv[])
     ERROR("execvp %s: %s", argv[0], strerror(errno));
     exit(-1);
   } else {
+    child_pid = pid;
     INFO("Spawned process %d", pid);
   }
   write_pid(program_pidfile, pid);
@@ -134,6 +137,15 @@ static void delete_pidfiles(void)
 {
   unlink(respawn_pidfile);
   unlink(program_pidfile);
+}
+
+/* Signal handler: Kills child and exits; does not attempt to report errors */
+static void kill_child(int signum_ignored)
+{
+  kill(child_pid, SIGTERM);
+  delete_pidfiles();
+  /* Do NOT call atexit() handlers, flush files, etc. */
+  _exit(1);
 }
 
 int main(int argc, char *argv[])
@@ -190,6 +202,8 @@ int main(int argc, char *argv[])
     /* Returns only in daemon */
   }
 
+  signal(SIGTERM, kill_child);
+
   /* If daemonizing, delete PID files once daemon exits */
   atexit(delete_pidfiles);
   write_pid(respawn_pidfile, getpid());
@@ -201,7 +215,7 @@ int main(int argc, char *argv[])
     rc = try_run(argv);
     stop = cdtime();
     interval_secs = CDTIME_T_TO_DOUBLE(stop - start);
-    if (WIFEXITED(rc) && WEXITSTATUS(rc) == 0) {
+    if (WIFEXITED(rc) && !WIFSIGNALED(rc) && WEXITSTATUS(rc) == 0) {
       INFO("Successful termination after %fs", interval_secs);
       exit(0);
     }
