@@ -1,6 +1,9 @@
 Permanent project members
 =========================
 
+Google, Inc.
+ - This fork of collectd as the Cloud Network Monitoring Agent.
+
 Florian "octo" Forster <octo at verplant.org>
  - Initial author.
 
@@ -45,6 +48,12 @@ Anthony Gialluca <tonyabg at charter.net>
 
 Antony Dovgal <tony at daylessday.org>
  - memcached plugin.
+
+Ariel Shaqed <arielshaqed at google.com>
+ - simple_respawn: Daemon wrapper to restart collectd on failures.
+ - TCPConns plugin: Linux support for reading tcp_info from netlink socket.
+ - WriteGRPC plugin: Write plugin to report values over gRPC.
+ - Cloud Network Monitoring Agent configuration and packaging.
 
 Aurélien Reynaud <collectd at wattapower.net>
  - LPAR plugin.
@@ -282,6 +291,9 @@ Vincent Bernat <vincent at bernat.im>
 
 Vincent Stehlé <vincent.stehle at free.fr>
  - hddtemp plugin.
+
+Yosi Heskia <yosih at google.com>
+ - WriteGRPC plugin: Liveness checking, logging.
 
 Wilfried Goesgens <dothebart at citadel.org>
  - linux support in the zfs_arc plugin.
