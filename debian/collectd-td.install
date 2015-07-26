@@ -1,0 +1,7 @@
+etc/collectd-td.conf opt/collectd-td/etc/
+opt/collectd-td/bin/*
+opt/collectd-td/sbin/*
+opt/collectd-td/lib/
+opt/collectd-td/include/collectd/
+opt/collectd-td/share/
+#/opt/libgrpc-td/ /opt/libgrpc-td/

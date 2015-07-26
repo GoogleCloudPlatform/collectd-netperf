@@ -1,0 +1,7 @@
+The Debian Package collectd-td
+----------------------------
+
+Packaging for collectd-td* packages for Debian and Ubuntu for the
+Google Cloud Network Monitoring Agent.
+
+ -- Ariel Shaqed (Scolnicov) <arielshaqed@google.com>  Wed, 22 Jul 2015 14:57:48 +0300

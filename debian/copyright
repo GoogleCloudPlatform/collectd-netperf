@@ -1,0 +1,11 @@
+Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: collectd-td
+Source: <https://github.com/GoogleCloudPlatform/collectd-netperf>
+
+Files: *
+Copyright: See ../AUTHORS and ../COPYING
+License: GPL-v2 and MIT License, see ../COPYING
+
+Files: debian/*
+Copyright: 2015 Ariel Shaqed (Scolnicov) <arielshaqed@google.com>
+License: GPL-2.0

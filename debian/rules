@@ -1,0 +1,137 @@
+#!/usr/bin/make -f
+# -*- makefile -*-
+
+# Uncomment this to turn on verbose mode.
+#export DH_VERBOSE=1
+
+# This has to be exported to make some magic below work.
+export DH_OPTIONS
+
+export LINTIAN_PROFILE=debian
+
+# Where libgrpc was installed
+libgrpc_path = /opt/libgrpc-td/
+
+# These are used for cross-compiling and for saving the configure script
+# from having to guess our platform (since we know it already)
+DEB_HOST_GNU_TYPE   ?= $(shell dpkg-architecture -qDEB_HOST_GNU_TYPE)
+DEB_BUILD_ARCH      ?= $(shell dpkg-architecture -qDEB_BUILD_ARCH)
+DEB_BUILD_GNU_TYPE  ?= $(shell dpkg-architecture -qDEB_BUILD_GNU_TYPE)
+
+export DEB_BUILD_MAINT_OPTIONS=hardening=+all
+
+LDFLAGS = $(shell dpkg-buildflags --get LDFLAGS)
+
+CPPFLAGS = $(shell dpkg-buildflags --get CPPFLAGS)
+CPPFLAGS += -I$(CURDIR)/debian/include
+CFLAGS = $(shell dpkg-buildflags --get CFLAGS)
+CFLAGS += -Wall -Wno-error=deprecated-declarations
+
+INSTALL = install -s
+
+confflags =	--host=$(DEB_HOST_GNU_TYPE) \
+		--build=$(DEB_BUILD_GNU_TYPE) \
+		--prefix=/opt/collectd-td \
+		--mandir=\$${prefix}/share/man \
+		--localstatedir=/var --sysconfdir=/etc \
+		--with-perl-bindings="INSTALLDIRS=vendor INSTALL_BASE=" \
+		--without-libstatgrab \
+		--with-included-ltdl \
+		--disable-all-plugins \
+		--disable-static \
+		--enable-logfile \
+		--enable-ping \
+		--enable-tcpconns \
+		--enable-write_grpc --with-grpc=$(libgrpc_path)
+
+config.status: configure
+	dh_testdir
+	./configure $(confflags) \
+		CPPFLAGS="$(CPPFLAGS)" CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)" \
+		JAVAC="$(JAVAC)" JAR="$(JAR)" JAVA_CPPFLAGS="$(JAVA_CPPFLAGS)" \
+		JAVA_LDFLAGS="$(JAVA_LDFLAGS)" \
+		INSTALL="$(INSTALL)" \
+		|| ( status=$$?; cat config.log; exit $$status )
+
+build: build-arch build-indep
+build-arch: build-stamp
+build-indep: build-stamp
+
+build-stamp: config.status
+	dh_testdir
+	$(MAKE)
+	touch build-stamp
+
+clean:
+	dh_testdir
+	dh_testroot
+	rm -f build-stamp
+	dh_clean || [ ! -f Makefile ] || $(MAKE) distclean
+	#debconf-updatepo
+
+install-indep: build
+	dh_testdir
+	dh_testroot
+	dh_clean -k
+	dh_installdirs -i
+	dh_install -i
+
+install-arch: build
+	dh_testdir
+	dh_testroot
+	dh_clean -k
+	dh_installdirs -a
+	$(MAKE) install DESTDIR=$(CURDIR)/debian/tmp
+	:
+	rm -f debian/tmp/usr/lib/collectd/*.la
+	rm -f debian/tmp/usr/lib/libcollectdclient.la
+	rm -f debian/tmp/etc/collectd.conf
+	rm -f debian/tmp/usr/share/man/man3/*.3pm
+	rm -fr debian/tmp/usr/share/perl5/
+	:
+	dh_install -a --sourcedir=$(CURDIR)/debian/tmp --fail-missing
+
+binary-indep:
+	dh_testdir
+	dh_testroot
+	dh_installchangelogs -i ChangeLog
+	dh_installdocs -A -i debian/README.Debian AUTHORS README TODO
+	dh_fixperms -i
+	dh_installdeb -i
+	dh_gencontrol -i
+	dh_md5sums -i
+	dh_builddeb -i
+
+binary-arch: build install-arch
+	dh_testdir
+	dh_testroot
+	dh_installchangelogs -a ChangeLog
+	dh_installdocs -A -a debian/README.Debian AUTHORS README TODO
+	dh_installdebconf -a
+	# TODO(arielshaqed): make this install our actual init file
+	#dh_installinit -pcollectd-td --name=collectd -- defaults 95
+	dh_link -a
+	dh_compress -a -Xexamples/
+	dh_fixperms -a
+	dh_makeshlibs -a
+	dh_installdeb -a
+	dh_shlibdeps -a -Ncollectd-td
+	#dpkg-shlibdeps -Tdebian/collectd.substvars \
+	#	-dDepends debian/collectd-core/usr/lib/collectd/rrdtool.so
+	#dpkg-shlibdeps -Tdebian/collectd-core.substvars \
+	#	-dDepends debian/collectd-core/usr/sbin/* \
+	#	-dSuggests debian/collectd-core/usr/lib/collectd/*.so
+	#grep shlibs:Suggests debian/collectd-core.substvars \
+	#	| sed -e 's/shlibs:Suggests/shlibs:Recommends/' \
+	#	>> debian/collectd.substvars
+	dh_gencontrol -a
+	dh_md5sums -a
+	dh_builddeb -a
+
+binary: binary-arch binary-indep
+.PHONY: build build-arch build-indep clean binary-indep binary-arch binary install-indep install-arch
+
+
+
+%:
+	dh $@  --parallel
