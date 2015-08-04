@@ -57,7 +57,7 @@ config.status Makefile src/Makefile: configure
 		INSTALL="$(INSTALL)" \
 		|| ( status=$$?; cat config.log; exit $$status )
 
-build: build-arch # build-indep
+build: build-arch build-indep
 build-arch: build-stamp
 build-indep: build-stamp
 
@@ -132,9 +132,10 @@ binary-arch: build install-arch
 	#	>> debian/collectd.substvars
 	dh_gencontrol -a
 	dh_md5sums -a
-	echo dh_builddeb done
+	echo dh_builddeb arch done
+	pwd
 	dh_builddeb -a
-	echo dh_builddeb done
+	echo dh_builddeb arch done
 
 binary: binary-arch binary-indep
 .PHONY: build build-arch build-indep clean binary-indep binary-arch binary install-indep install-arch
