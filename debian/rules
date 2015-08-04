@@ -13,6 +13,9 @@ export DH_OPTIONS
 DEBUILD_LINTIAN = no
 export DEBUILD_LINTIAN
 
+# Pathname to a bundle of trusted root certs on the destination machine.
+trusted_root_certs_path = /etc/ssl/certs/ca-certificates.crt
+
 # Where libgrpc was installed
 libgrpc_path = /opt/libgrpc-td/
 # Where to install libgrpc while building DEB
@@ -93,6 +96,8 @@ install-arch: build
 	ln -s libgrpc.so.0.5.0.0 $(libgrpc_deb_install_dir)/libgrpc.so.0
 	ln -s libgpr.so.0.5.0.0 $(libgrpc_deb_install_dir)/libgpr.so.0
 	install -d debian/tmp/opt/collectd-td/etc/
+	sed -i -e 's|@TRUSTED_ROOT_CERTS_BUNDLE@|$(trusted_root_certs_path)|' \
+	    debian/tmp/etc/collectd-td.conf
 	install debian/tmp/etc/collectd-td.conf debian/tmp/opt/collectd-td/etc/
 	:
 	rm -f debian/tmp/usr/lib/collectd/*.la
