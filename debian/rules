@@ -7,7 +7,11 @@
 # This has to be exported to make some magic below work.
 export DH_OPTIONS
 
-export LINTIAN_PROFILE=debian
+# Comment this out to run lintian once the package is built. This will
+# show interesting errors, but also fail the package build because
+# it's not Debianly-correct.
+DEBUILD_LINTIAN = no
+export DEBUILD_LINTIAN
 
 # Where libgrpc was installed
 libgrpc_path = /opt/libgrpc-td/
@@ -27,7 +31,7 @@ CPPFLAGS += -I$(CURDIR)/debian/include
 CFLAGS = $(shell dpkg-buildflags --get CFLAGS)
 CFLAGS += -Wall -Wno-error=deprecated-declarations
 
-INSTALL = install -s
+#INSTALL = install -s
 
 confflags =	--host=$(DEB_HOST_GNU_TYPE) \
 		--build=$(DEB_BUILD_GNU_TYPE) \
@@ -36,7 +40,7 @@ confflags =	--host=$(DEB_HOST_GNU_TYPE) \
 		--localstatedir=/var --sysconfdir=/etc \
 		--with-perl-bindings="INSTALLDIRS=vendor INSTALL_BASE=" \
 		--without-libstatgrab \
-		--with-included-ltdl \
+		--without-included-ltdl \
 		--disable-all-plugins \
 		--disable-static \
 		--enable-logfile \
@@ -44,7 +48,7 @@ confflags =	--host=$(DEB_HOST_GNU_TYPE) \
 		--enable-tcpconns \
 		--enable-write_grpc --with-grpc=$(libgrpc_path)
 
-config.status: configure
+config.status Makefile src/Makefile: configure
 	dh_testdir
 	./configure $(confflags) \
 		CPPFLAGS="$(CPPFLAGS)" CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)" \
@@ -53,11 +57,11 @@ config.status: configure
 		INSTALL="$(INSTALL)" \
 		|| ( status=$$?; cat config.log; exit $$status )
 
-build: build-arch build-indep
+build: build-arch # build-indep
 build-arch: build-stamp
 build-indep: build-stamp
 
-build-stamp: config.status
+build-stamp: config.status Makefile src/Makefile
 	dh_testdir
 	$(MAKE)
 	touch build-stamp
@@ -72,16 +76,16 @@ clean:
 install-indep: build
 	dh_testdir
 	dh_testroot
-	dh_clean -k
+	dh_prep
 	dh_installdirs -i
 	dh_install -i
 
 install-arch: build
 	dh_testdir
 	dh_testroot
-	dh_clean -k
+	dh_prep
 	dh_installdirs -a
-	$(MAKE) install DESTDIR=$(CURDIR)/debian/tmp
+	$(MAKE) install-strip DESTDIR=$(CURDIR)/debian/tmp
 	:
 	rm -f debian/tmp/usr/lib/collectd/*.la
 	rm -f debian/tmp/usr/lib/libcollectdclient.la
@@ -100,7 +104,9 @@ binary-indep:
 	dh_installdeb -i
 	dh_gencontrol -i
 	dh_md5sums -i
+	echo dh_builddeb
 	dh_builddeb -i
+	echo dh_builddeb done
 
 binary-arch: build install-arch
 	dh_testdir
@@ -115,7 +121,7 @@ binary-arch: build install-arch
 	dh_fixperms -a
 	dh_makeshlibs -a
 	dh_installdeb -a
-	dh_shlibdeps -a -Ncollectd-td
+	dh_shlibdeps -a -Ncollectd-td  -l${libgrpc_path}/lib/
 	#dpkg-shlibdeps -Tdebian/collectd.substvars \
 	#	-dDepends debian/collectd-core/usr/lib/collectd/rrdtool.so
 	#dpkg-shlibdeps -Tdebian/collectd-core.substvars \
@@ -126,7 +132,9 @@ binary-arch: build install-arch
 	#	>> debian/collectd.substvars
 	dh_gencontrol -a
 	dh_md5sums -a
+	echo dh_builddeb done
 	dh_builddeb -a
+	echo dh_builddeb done
 
 binary: binary-arch binary-indep
 .PHONY: build build-arch build-indep clean binary-indep binary-arch binary install-indep install-arch

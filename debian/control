@@ -11,9 +11,9 @@ Vcs-Browser: https://github.com/GoogleCloudPlatform/collectd-netperf/tree/netper
 
 Package: collectd-td
 Architecture: any
-Depends: ${shlibs:Depends}, ${misc:Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends}, liboping
 Description: Statistics collection daemon
-  collectd is a small daemon which collects system information periodically and
+ collectd is a small daemon which collects system information periodically and
  provides mechanisms to monitor and store the values in a variety of ways. It
  is written in C for performance. Since the daemon doesn't need to start up
  every time it wants to update the values it's very fast and easy on the
