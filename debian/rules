@@ -15,6 +15,8 @@ export DEBUILD_LINTIAN
 
 # Where libgrpc was installed
 libgrpc_path = /opt/libgrpc-td/
+# Where to install libgrpc while building DEB
+libgrpc_deb_install_dir = debian/tmp/$(libgrpc_path)/lib
 
 # These are used for cross-compiling and for saving the configure script
 # from having to guess our platform (since we know it already)
@@ -86,6 +88,10 @@ install-arch: build
 	dh_prep
 	dh_installdirs -a
 	$(MAKE) install-strip DESTDIR=$(CURDIR)/debian/tmp
+	install -d $(CURDIR)/$(libgrpc_deb_install_dir)
+	install $(libgrpc_path)/lib/* $(CURDIR)/$(libgrpc_deb_install_dir)
+	ln -s libgrpc.so.0.5.0.0 $(CURDIR)/$(libgrpc_deb_install_dir)/libgrpc.so.0
+	ln -s libgpr.so.0.5.0.0 $(CURDIR)/$(libgrpc_deb_install_dir)/libgpr.so.0
 	:
 	rm -f debian/tmp/usr/lib/collectd/*.la
 	rm -f debian/tmp/usr/lib/libcollectdclient.la

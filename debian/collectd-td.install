@@ -4,4 +4,4 @@ opt/collectd-td/sbin/*
 opt/collectd-td/lib/
 opt/collectd-td/include/collectd/
 opt/collectd-td/share/
-#/opt/libgrpc-td/ /opt/libgrpc-td/
+opt/libgrpc-td/lib/* /opt/libgrpc-td/lib/
