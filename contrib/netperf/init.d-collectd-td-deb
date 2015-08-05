@@ -1,0 +1,106 @@
+#!/bin/bash
+### BEGIN INIT INFO
+# Provides:          collectd-td
+# Required-Start:    2 3 4 5
+# Required-Stop:     2 3 4 5
+# Default-Start:     2 3 4 5
+# Default-Stop:
+# Short-Description: Start Google Cloud Network Monitoring Agent on Deb systems
+#                    
+# Description: The Cloud Network Monitoring Agent reports fine-grained network
+#              statistics from VMs running on GCE.
+### END INIT INFO
+
+PATH=/bin:/usr/bin:/sbin:/usr/sbin
+
+servicename=collectd-td
+dir=/opt/collectd-td
+respawn="${dir}/bin/simple_respawn"
+prog="${dir}/sbin/collectd-td"
+logfile="/var/log/collectd-td.log"
+lockfile="/var/lock/$servicename"
+pidfile="/var/run/${servicename}.pid"
+respawn_pidfile="/var/run/respawn-${servicename}.pid"
+
+. /lib/lsb/init-functions
+
+join() { local IFS="$1"; shift; echo "$*"; }
+
+start() {
+  local respawn_args="-respawn_pidfile $respawn_pidfile -program_pidfile $pidfile -d -l $logfile"
+  local cmd="$prog -f -C $dir/etc/collectd-td.conf"
+  local vars="MALLOC_ARENA_MAX=1 LD_LIBRARY_PATH=/opt/libgrpc-td/lib"
+  local RETVAL=0
+  log_daemon_msg "Starting $servicename" "$servicename"
+  env $vars start-stop-daemon --start --pidfile "$respawn_pidfile" \
+    --exec "$respawn" -- $respawn_args $cmd
+  RETVAL=$?
+  log_end_msg $RETVAL
+  [ $RETVAL -eq 0 ] && touch "$lockfile"
+  return $RETVAL
+}
+
+stop() {
+  local RETVAL1=0
+  local RETVAL2=0
+  local -a failure_msg
+  log_daemon_msg "Stopping $servicename" "$servicename"
+  log_progress_msg "respawn"
+  start-stop-daemon --stop --pidfile "$respawn_pidfile" --exec "$respawn"
+  RETVAL1=$?
+  [ $RETVAL1 -eq 0 ] || failure_msg[${#failure_msg}]="failed to stop $respawn"
+  start-stop-daemon --stop --pidfile "$pidfile" --exec "$prog"
+  RETVAL2=$?
+  [ $RETVAL2 -eq 0 ] || failure_msg[${#failure_msg}]="failed to stop $prog"
+  [ $RETVAL1 -eq 0 -o $RETVAL2 -eq 0 ] && rm -f "$lockfile"
+  if [ ${#failure_msg} -ne 0 ]; then
+    log_failure_msg `join $'\n' ${failure_msg[@]}`
+    return 1
+  else
+    log_success_msg
+    return 0
+  fi
+}
+
+status() {
+  start-stop-daemon --status --pidfile "$respawn_pidfile" --exec "$respawn"
+  RETVAL1=$?
+  [ $RETVAL1 -eq 0 ] || log_warning_msg "No $respawn process running"
+  start-stop-daemon --status --pidfile "$pidfile" --exec "$prog"
+  RETVAL2=$?
+  [ $RETVAL2 -eq 0 ] || log_failure_msg "No $prog process running"
+  if [ $RETVAL1 -eq 0 -a $RETVAL2 -eq 0 ]; then
+    log_success_msg "$respawn_process and $prog are both running"
+    return 0
+  else
+    log_end_msg 1
+    return 1
+  fi
+}
+
+case "$1" in
+  start)
+    start
+    ;;
+  stop)
+    stop
+    ;;
+  status)
+    status
+    ;;
+  restart)
+    stop
+    start
+    ;;
+  reload)
+    stop
+    start
+    ;;
+  *)
+    echo "Usage: <servicename> {start|stop|status|reload|restart}"
+    exit 1
+    ;;
+esac
+exit $?
+
+    
