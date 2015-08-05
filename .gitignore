@@ -36,6 +36,7 @@ src/collectd-nagios
 src/collectd-tg
 src/collectdctl
 src/collectdmon
+src/simple_respawn
 src/*.1
 src/*.5
 src/.pod2man.tmp.*

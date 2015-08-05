@@ -1,0 +1,162 @@
+#!/usr/bin/make -f
+# -*- makefile -*-
+
+# Uncomment this to turn on verbose mode.
+#export DH_VERBOSE=1
+
+# This has to be exported to make some magic below work.
+export DH_OPTIONS
+
+# Comment this out to run lintian once the package is built. This will
+# show interesting errors, but also fail the package build because
+# it's not Debianly-correct.
+DEBUILD_LINTIAN = no
+export DEBUILD_LINTIAN
+
+# Pathname to a bundle of trusted root certs on the destination machine.
+trusted_root_certs_path = /etc/ssl/certs/ca-certificates.crt
+
+# Where libgrpc was installed
+libgrpc_path = /opt/libgrpc-td/
+# Where to install libgrpc while building DEB
+libgrpc_deb_install_dir = debian/tmp/$(libgrpc_path)/lib
+
+# These are used for cross-compiling and for saving the configure script
+# from having to guess our platform (since we know it already)
+DEB_HOST_GNU_TYPE   ?= $(shell dpkg-architecture -qDEB_HOST_GNU_TYPE)
+DEB_BUILD_ARCH      ?= $(shell dpkg-architecture -qDEB_BUILD_ARCH)
+DEB_BUILD_GNU_TYPE  ?= $(shell dpkg-architecture -qDEB_BUILD_GNU_TYPE)
+
+export DEB_BUILD_MAINT_OPTIONS=hardening=+all
+
+LDFLAGS = $(shell dpkg-buildflags --get LDFLAGS)
+
+CPPFLAGS = $(shell dpkg-buildflags --get CPPFLAGS)
+CPPFLAGS += -I$(CURDIR)/debian/include
+CFLAGS = $(shell dpkg-buildflags --get CFLAGS)
+CFLAGS += -Wall -Wno-error=deprecated-declarations
+
+#INSTALL = install -s
+
+confflags =	--host=$(DEB_HOST_GNU_TYPE) \
+		--build=$(DEB_BUILD_GNU_TYPE) \
+		--prefix=/opt/collectd-td \
+		--mandir=\$${prefix}/share/man \
+		--localstatedir=/var --sysconfdir=/opt/collectd-td/etc \
+		--with-perl-bindings="INSTALLDIRS=vendor INSTALL_BASE=" \
+		--without-libstatgrab \
+		--without-included-ltdl \
+		--disable-all-plugins \
+		--disable-static \
+		--enable-logfile \
+		--enable-ping \
+		--enable-tcpconns \
+		--enable-write_grpc --with-grpc=$(libgrpc_path)
+
+config.status Makefile src/Makefile: configure
+	dh_testdir
+	./configure $(confflags) \
+		CPPFLAGS="$(CPPFLAGS)" CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)" \
+		JAVAC="$(JAVAC)" JAR="$(JAR)" JAVA_CPPFLAGS="$(JAVA_CPPFLAGS)" \
+		JAVA_LDFLAGS="$(JAVA_LDFLAGS)" \
+		INSTALL="$(INSTALL)" \
+		|| ( status=$$?; cat config.log; exit $$status )
+
+build: build-arch build-indep
+build-arch: build-stamp
+build-indep: build-stamp
+
+build-stamp: config.status Makefile src/Makefile
+	dh_testdir
+	$(MAKE)
+	touch build-stamp
+
+clean:
+	dh_testdir
+	dh_testroot
+	rm -f build-stamp
+	dh_clean || [ ! -f Makefile ] || $(MAKE) distclean
+	#debconf-updatepo
+
+install-indep: build
+	dh_testdir
+	dh_testroot
+	dh_prep
+	dh_installdirs -i
+	dh_install -i
+
+install-arch: build
+	dh_testdir
+	dh_testroot
+	dh_prep
+	dh_installdirs -a
+	$(MAKE) install-strip DESTDIR=$(CURDIR)/debian/tmp
+	install -d $(libgrpc_deb_install_dir)
+	install $(libgrpc_path)/lib/* $(libgrpc_deb_install_dir)
+	ln -s libgrpc.so.0.5.0.0 $(libgrpc_deb_install_dir)/libgrpc.so.0
+	ln -s libgpr.so.0.5.0.0 $(libgrpc_deb_install_dir)/libgpr.so.0
+	ln -s collectd debian/tmp/opt/collectd-td/sbin/collectd-td
+	install -d debian/tmp/opt/collectd-td/etc/
+	sed -i -e 's|@TRUSTED_ROOT_CERTS_BUNDLE@|$(trusted_root_certs_path)|' \
+	    debian/tmp/etc/collectd-td.conf
+	install debian/tmp/etc/collectd-td.conf debian/tmp/opt/collectd-td/etc/
+	install -d debian/tmp/etc/init.d/
+	install contrib/netperf/init.d-collectd-td-deb debian/tmp/etc/init.d/collectd-td
+	:
+	rm -f debian/tmp/usr/lib/collectd/*.la
+	rm -f debian/tmp/usr/lib/libcollectdclient.la
+	rm -f debian/tmp/etc/collectd.conf
+	rm -f debian/tmp/usr/share/man/man3/*.3pm
+	rm -fr debian/tmp/usr/share/perl5/
+	:
+	dh_install -a --sourcedir=$(CURDIR)/debian/tmp --fail-missing
+
+binary-indep:
+	dh_testdir
+	dh_testroot
+	dh_installchangelogs -i ChangeLog
+	dh_installdocs -A -i debian/README.Debian AUTHORS README TODO
+	dh_fixperms -i
+	dh_installdeb -i
+	dh_gencontrol -i
+	dh_md5sums -i
+	echo dh_builddeb
+	dh_builddeb -i
+	echo dh_builddeb done
+
+binary-arch: build install-arch
+	dh_testdir
+	dh_testroot
+	dh_installchangelogs -a ChangeLog
+	dh_installdocs -A -a debian/README.Debian AUTHORS README TODO
+	dh_installdebconf -a
+	# TODO(arielshaqed): make this install our actual init file
+	#dh_installinit -pcollectd-td --name=collectd -- defaults 95
+	dh_link -a
+	dh_compress -a -Xexamples/
+	dh_fixperms -a
+	dh_makeshlibs -a
+	dh_installdeb -a
+	dh_shlibdeps -a -Ncollectd-td  -l${libgrpc_path}/lib/
+	#dpkg-shlibdeps -Tdebian/collectd.substvars \
+	#	-dDepends debian/collectd-core/usr/lib/collectd/rrdtool.so
+	#dpkg-shlibdeps -Tdebian/collectd-core.substvars \
+	#	-dDepends debian/collectd-core/usr/sbin/* \
+	#	-dSuggests debian/collectd-core/usr/lib/collectd/*.so
+	#grep shlibs:Suggests debian/collectd-core.substvars \
+	#	| sed -e 's/shlibs:Suggests/shlibs:Recommends/' \
+	#	>> debian/collectd.substvars
+	dh_gencontrol -a
+	dh_md5sums -a
+	echo dh_builddeb arch done
+	pwd
+	dh_builddeb -a
+	echo dh_builddeb arch done
+
+binary: binary-arch binary-indep
+.PHONY: build build-arch build-indep clean binary-indep binary-arch binary install-indep install-arch
+
+
+
+%:
+	dh $@  --parallel
