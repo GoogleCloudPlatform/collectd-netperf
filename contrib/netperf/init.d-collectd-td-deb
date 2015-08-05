@@ -44,12 +44,14 @@ stop() {
   local RETVAL1=0
   local RETVAL2=0
   local -a failure_msg
-  log_daemon_msg "Stopping $servicename" "$servicename"
+  log_daemon_msg "Stopping" "$servicename"
   log_progress_msg "respawn"
   start-stop-daemon --stop --pidfile "$respawn_pidfile" --exec "$respawn"
   RETVAL1=$?
   [ $RETVAL1 -eq 0 ] || failure_msg[${#failure_msg}]="failed to stop $respawn"
-  start-stop-daemon --stop --pidfile "$pidfile" --exec "$prog"
+  log_progress_msg "collectd"
+  # respawn PIDFILE for collectd is gone by now.
+  start-stop-daemon --stop --exec "$prog"
   RETVAL2=$?
   [ $RETVAL2 -eq 0 ] || failure_msg[${#failure_msg}]="failed to stop $prog"
   [ $RETVAL1 -eq 0 -o $RETVAL2 -eq 0 ] && rm -f "$lockfile"
