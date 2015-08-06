@@ -1,4 +1,4 @@
-etc/collectd-td.conf /opt/collectd-td/etc/
+opt/collectd-td/etc/collectd-td.conf /opt/collectd-td/etc/
 opt/collectd-td/bin/*
 opt/collectd-td/sbin/*
 opt/collectd-td/lib/

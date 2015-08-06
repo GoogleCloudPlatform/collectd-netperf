@@ -98,8 +98,7 @@ install-arch: build
 	ln -s collectd debian/tmp/opt/collectd-td/sbin/collectd-td
 	install -d debian/tmp/opt/collectd-td/etc/
 	sed -i -e 's|@TRUSTED_ROOT_CERTS_BUNDLE@|$(trusted_root_certs_path)|' \
-	    debian/tmp/etc/collectd-td.conf
-	install debian/tmp/etc/collectd-td.conf debian/tmp/opt/collectd-td/etc/
+	    debian/tmp/opt/collectd-td/etc/collectd-td.conf
 	install -d debian/tmp/etc/init.d/
 	install contrib/netperf/init.d-collectd-td-deb debian/tmp/etc/init.d/collectd-td
 	:
