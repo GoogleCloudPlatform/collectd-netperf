@@ -38,7 +38,7 @@ configure_cgroup() {
   # do this when $cgroup_root/memory is loaded.
   mkdir -p $mem || log_daemon_msg "Failed to create cgroup $mem"
   echo 1000000 > $cpu/cpu.cfs_period_us
-  echo 1500 > $cpu/cpu.cfs_quota_us
+  echo 15000 > $cpu/cpu.cfs_quota_us
   echo 180m > $mem/memory.limit_in_bytes
   # memsw.limit_in_bytes does not exist in Ubuntu Trusty (14.04)
   echo 0 > $mem/memory.oom_control
