@@ -1,0 +1,2 @@
+# Overrides: needed because we're not exactly a Debian package.
+collectd-td: dir-or-file-in-optarg

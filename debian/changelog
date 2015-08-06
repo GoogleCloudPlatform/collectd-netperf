@@ -1,0 +1,5 @@
+collectd-td (5.4.2-netperf) unstable; urgency=low
+
+  * Initial Release.
+
+ -- Ariel Shaqed (Scolnicov) <arielshaqed@google.com>  Wed, 22 Jul 2015 14:57:48 +0300

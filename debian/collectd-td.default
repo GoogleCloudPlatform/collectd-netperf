@@ -1,0 +1,10 @@
+# Defaults for collectd-td initscript
+# sourced by /etc/init.d/collectd-td
+# installed at /etc/default/collectd-td by the maintainer scripts
+
+#
+# This is a POSIX shell fragment
+#
+
+# Additional options that are passed to the Daemon.
+DAEMON_OPTS=""
