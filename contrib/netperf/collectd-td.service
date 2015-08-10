@@ -1,0 +1,30 @@
+[Unit]
+Description=The Cloud Network Monitoring Agent reports fine-grained network statistics from VMs running on GCE
+After=network.target
+Wants=network.target
+
+[Install]
+Alias=collectd-td.service
+WantedBy=basic.target
+Also=network.target
+
+[Service]
+Type=forking
+Environment=MALLOC_ARENA_MAX=1 LD_LIBRARY_PATH=/opt/libgrpc-td/lib
+ExecStart=/opt/collectd-td/sbin/collectd-td -C /opt/collectd-td/etc/collectd-td.conf
+PIDFile=/var/run/collectd-td.pid
+KillMode=process
+Restart=on-failure
+# systemd allows per-process control using CGroups. However configuration is
+# possible even when the kernel does not support it. In particular:
+#
+#  - Debian 8 (and 7) require you to add a "cgroup_enable=memory" option to
+#    GRUB, or the CGroups memory controller will not be installed and memory
+#    limitation will be ignored.
+#
+#  - Debian 8 (and 7) do not appear to support "CPUQuota", only "CPUShares".
+CPUAccounting=true
+CPUQuota=1.5%
+CPUShares=32
+MemoryAccounting=true
+MemoryLimit=180M
