@@ -50,6 +50,8 @@
 %define _cgroupdir /etc/cgconfig.d/
 %define _sysconfigddir /etc/sysconfig/
 
+%define trusted_root_certs_path /etc/ssl/certs/ca-bundle.crt
+
 # plugins only buildable on RHEL6
 # (NB: %{elN} macro is not available on RHEL < 6)
 %{?el6:%global _has_libyajl 0}
@@ -230,11 +232,11 @@
 
 Summary:	Statistics collection daemon for filling RRD files
 Name:		collectd
-Version:	5.4.2.872.g2e68987
+Version:	5.4.2.890.gf553206
 Release:	1%{?dist}
-URL:		http://collectd.org
-Source:		http://collectd.org/files/%{name}-%{version}.tar.bz2
-License:	GPLv2
+URL:		https://github.com/GoogleCloudPlatform/collectd-netperf
+Source:		collectd-5.4.2.890.gf553206.tar.gz
+License:	GPLv2, MIT
 Group:		System Environment/Daemons
 BuildRoot:	%{_tmppath}/%{name}-%{version}-root
 BuildRequires:	libgcrypt-devel, kernel-headers, libtool-ltdl-devel
@@ -1773,6 +1775,8 @@ rm -rf %{buildroot}
 %{__rm} -f %{buildroot}%{_sysconfdir}/collectd.conf
 
 %{__ln_s} %{_sbindir}/collectd %{buildroot}%{_sbindir}/collectd-td
+/bin/sed -i -e 's|@TRUSTED_ROOT_CERTS_BUNDLE@|%{trusted_root_certs_path}|' \
+  %{buildroot}%{_sysconfdir}/collectd-td.conf
 
 ### Clean up docs
 find contrib/ -type f -exec %{__chmod} a-x {} \;

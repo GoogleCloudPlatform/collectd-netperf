@@ -4,7 +4,7 @@ SUBDIRS = libltdl src bindings .
 
 AM_CPPFLAGS = $(LTDLINCL)
 
-EXTRA_DIST = contrib version-gen.sh
+EXTRA_DIST = contrib version-gen.sh debian
 
 install-exec-hook:
 	$(mkinstalldirs) $(DESTDIR)$(localstatedir)/run

@@ -53,7 +53,7 @@ confflags =	--host=$(DEB_HOST_GNU_TYPE) \
 		--enable-tcpconns \
 		--enable-write_grpc --with-grpc=$(libgrpc_path)
 
-config.status Makefile src/Makefile: configure
+config.status Makefile src/Makefile: ./configure
 	dh_testdir
 	./configure $(confflags) \
 		CPPFLAGS="$(CPPFLAGS)" CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)" \
