@@ -62,7 +62,7 @@ configure_cgroup() {
       cgroup_has_variable memory.limit_in_bytes &&
       cgset -r memory.limit_in_bytes=180m $cgroup_path &&
       (cgset -r memory.memsw_limit_in_bytes=180m $cgroup_path \
-        2>&1 >/dev/null || true) &&
+        >/dev/null 2>&1 || true) &&
       cgset -r memory.oom_control=0 $cgroup_path
     ); then
     cgroup_groups[1]=memory
