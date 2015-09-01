@@ -17,6 +17,9 @@ install-exec-hook:
 		$(INSTALL) -m 0644 contrib/netperf/collectd-td.conf $(DESTDIR)$(sysconfdir)/collectd-td.conf; \
 	fi;
 
+dist-hook:
+	sed -i 's/git/native/' $(distdir)/debian/source/format
+
 maintainer-clean-local:
 	-rm -f -r libltdl
 	-rm -f INSTALL
