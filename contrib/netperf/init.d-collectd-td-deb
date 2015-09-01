@@ -39,8 +39,8 @@ configure_cgroup() {
   # instead. This provides a *share* of CPU but does not limit *total* CPU
   # time consumed.
   (
-    cgset -r cpu.cfs_period_us=1000000 &&
-    cgset -r cpu.cfs_quota_us=15000
+    cgset -r cpu.cfs_period_us=1000000 $cgroup_path &&
+    cgset -r cpu.cfs_quota_us=15000 $cgroup_path
   ) || (
     cgset -r cpu.shares=24 $cgroup_path
     # This also means we have to define "cpus" and "mems". Limit those to
@@ -49,16 +49,16 @@ configure_cgroup() {
       cgset -r cpuset.cpus=0 $p
       cgset -r cpuset.mems=0 $p
     done
-  ) || log_failure_msg "Failed to limit CPU"
+  ) || log_warning_msg "Failed to limit CPU"
 
   if (
-      cgset -r memory.limit_in_bytes=180m &&
-      (cgset -r memory.memsw_limit_in_bytes=180m || true) &&
-      cgset -r memory.oom_control=0
+      cgset -r memory.limit_in_bytes=180m $cgroup_path &&
+      (cgset -r memory.memsw_limit_in_bytes=180m $cgroup_path || true) &&
+      cgset -r memory.oom_control=0 $cgroup_path
     ); then
     cgroup_groups[1]=memory
   else
-    log_daemon_msg "Failed to limit mem"
+    log_warning_msg "Failed to limit mem"
   fi
 }
 
