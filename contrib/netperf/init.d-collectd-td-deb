@@ -28,6 +28,11 @@ declare -a cgroup_groups
 
 . /lib/lsb/init-functions
 
+cgroup_has_variable() {
+  ! cgget -r $1 / 2>&1 |
+    fgrep -e 'No such file or directory' -e 'cannot find controller' > /dev/null
+}
+
 # Ubuntu Trusty removes cgconfig for configuring CGroups but does not
 # furnish a replacement. cgroup-lite only provides the CGroups filesystem.
 # Build our configuration directly on that filesystem.  This might break
@@ -35,16 +40,18 @@ declare -a cgroup_groups
 configure_cgroup() {
   cgroup_groups[0]=cpu
   cgcreate -g cpu:$cgroup_path
-  # E.g. Debian does not support quota and period, use cpu.shares
-  # instead. This provides a *share* of CPU but does not limit *total* CPU
-  # time consumed.
+  
   (
+    cgroup_has_variable cpu.cfs_period_us &&
     cgset -r cpu.cfs_period_us=1000000 $cgroup_path &&
     cgset -r cpu.cfs_quota_us=15000 $cgroup_path
   ) || (
+    # E.g. Debian does not support quota and period, use cpu.shares
+    # instead. This provides a *share* of CPU but does not limit *total* CPU
+    # time consumed.
     cgset -r cpu.shares=24 $cgroup_path
-    # This also means we have to define "cpus" and "mems". Limit those to
-    # just the first one.
+    # We also have to define "cpus" and "mems" along the entire path. Limit
+    # those to just the first one.
     for p in $cgroup_subpaths; do
       cgset -r cpuset.cpus=0 $p
       cgset -r cpuset.mems=0 $p
@@ -52,8 +59,10 @@ configure_cgroup() {
   ) || log_warning_msg "Failed to limit CPU"
 
   if (
+      cgroup_has_variable memory.limit_in_bytes &&
       cgset -r memory.limit_in_bytes=180m $cgroup_path &&
-      (cgset -r memory.memsw_limit_in_bytes=180m $cgroup_path || true) &&
+      (cgset -r memory.memsw_limit_in_bytes=180m $cgroup_path \
+        2>&1 >/dev/null || true) &&
       cgset -r memory.oom_control=0 $cgroup_path
     ); then
     cgroup_groups[1]=memory
