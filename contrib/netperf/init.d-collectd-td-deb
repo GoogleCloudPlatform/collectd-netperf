@@ -23,6 +23,8 @@ pidfile="/var/run/${servicename}.pid"
 respawn_pidfile="/var/run/respawn-${servicename}.pid"
 cgroup_root="/sys/fs/cgroup"
 cgroup_path="daemons/netperf"
+cgroup_subpaths="daemons daemons/netperf"
+declare -a cgroup_groups
 
 . /lib/lsb/init-functions
 
@@ -31,17 +33,33 @@ cgroup_path="daemons/netperf"
 # Build our configuration directly on that filesystem.  This might break
 # when Debian and/or Ubuntu do provide a replacement.
 configure_cgroup() {
-  local cpu=$cgroup_root/cpu/$cgroup_path
-  local mem=$cgroup_root/memory/$cgroup_path
-  mkdir -p $cpu || log_daemon_msg "Failed to create cgroup $cpu"
-  # TODO(arielshaqed): If Debian doesn't have cgroup memory controller, only
-  # do this when $cgroup_root/memory is loaded.
-  mkdir -p $mem || log_daemon_msg "Failed to create cgroup $mem"
-  echo 1000000 > $cpu/cpu.cfs_period_us
-  echo 15000 > $cpu/cpu.cfs_quota_us
-  echo 180m > $mem/memory.limit_in_bytes
-  # memsw.limit_in_bytes does not exist in Ubuntu Trusty (14.04)
-  echo 0 > $mem/memory.oom_control
+  cgroup_groups[0]=cpu
+  cgcreate -g cpu:$cgroup_path
+  # E.g. Debian does not support quota and period, use cpu.shares
+  # instead. This provides a *share* of CPU but does not limit *total* CPU
+  # time consumed.
+  (
+    cgset -r cpu.cfs_period_us=1000000 &&
+    cgset -r cpu.cfs_quota_us=15000
+  ) || (
+    cgset -r cpu.shares=24 $cgroup_path
+    # This also means we have to define "cpus" and "mems". Limit those to
+    # just the first one.
+    for p in $cgroup_subpaths; do
+      cgset -r cpuset.cpus=0 $p
+      cgset -r cpuset.mems=0 $p
+    done
+  ) || log_failure_msg "Failed to limit CPU"
+
+  if (
+      cgset -r memory.limit_in_bytes=180m &&
+      (cgset -r memory.memsw_limit_in_bytes=180m || true) &&
+      cgset -r memory.oom_control=0
+    ); then
+    cgroup_groups[1]=memory
+  else
+    log_daemon_msg "Failed to limit mem"
+  fi
 }
 
 join() { local IFS="$1"; shift; echo "$*"; }
@@ -53,9 +71,10 @@ start() {
   local RETVAL=0
   log_daemon_msg "Starting $servicename" "$servicename"
   configure_cgroup
+  local cgexec_cgroups=`join ',' ${cgroup_groups[@]}`
   env $vars start-stop-daemon --start --pidfile "$respawn_pidfile" \
     --exec "/usr/bin/cgexec" -- \
-    -g "cpu,memory:$cgroup_path" $respawn_args $cmd
+    -g "${cgexec_cgroups}:$cgroup_path" $respawn_args $cmd
   RETVAL=$?
   log_end_msg $RETVAL
   [ $RETVAL -eq 0 ] && touch "$lockfile"
