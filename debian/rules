@@ -102,7 +102,7 @@ install-arch: build
 	install -d debian/tmp/etc/init.d/
 	install contrib/netperf/init.d-collectd-td-deb debian/tmp/etc/init.d/collectd-td
 	:
-	rm -f debian/tmp/usr/lib/collectd/*.la
+	rm -f debian/tmp/usr/lib/collectd-td/*.la
 	rm -f debian/tmp/usr/lib/libcollectdclient.la
 	rm -f debian/tmp/etc/collectd.conf
 	rm -f debian/tmp/usr/share/man/man3/*.3pm
@@ -138,10 +138,10 @@ binary-arch: build install-arch
 	dh_installdeb -a
 	dh_shlibdeps -a -Ncollectd-td  -l${libgrpc_path}/lib/
 	#dpkg-shlibdeps -Tdebian/collectd.substvars \
-	#	-dDepends debian/collectd-core/usr/lib/collectd/rrdtool.so
+	#	-dDepends debian/collectd-core/usr/lib/collectd-td/rrdtool.so
 	#dpkg-shlibdeps -Tdebian/collectd-core.substvars \
 	#	-dDepends debian/collectd-core/usr/sbin/* \
-	#	-dSuggests debian/collectd-core/usr/lib/collectd/*.so
+	#	-dSuggests debian/collectd-core/usr/lib/collectd-td/*.so
 	#grep shlibs:Suggests debian/collectd-core.substvars \
 	#	| sed -e 's/shlibs:Suggests/shlibs:Recommends/' \
 	#	>> debian/collectd.substvars
