@@ -3,7 +3,7 @@ opt/collectd-td/bin/*
 opt/collectd-td/sbin/*
 opt/collectd-td/lib/
 opt/collectd-td/etc/
-opt/collectd-td/include/collectd/
+opt/collectd-td/include/collectd-td/
 opt/collectd-td/share/
 opt/libgrpc-td/lib/* /opt/libgrpc-td/lib/
 etc/init.d/* /etc/init.d
