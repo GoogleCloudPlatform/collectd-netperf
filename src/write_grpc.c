@@ -26,15 +26,6 @@
  *   Yosef Heskia <yosih+netperfgoogle.com>
  */
 
-/*
- * https://collectd.org/wiki/index.php/Plugin_architecture says:
- *
- * "All *.c-files must include a copyright notice and license
- * information. The license must be compatible to collectd's own
- * license, the GPL 2. Unless you have a good reason to split up your
- * plugin into multiple files, please put everything into one .c-file."
- */
-
 #include "grpc/grpc.h"
 #include "grpc/grpc_security.h"
 #include "grpc/support/alloc.h"
