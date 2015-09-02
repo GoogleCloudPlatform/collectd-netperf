@@ -5,6 +5,7 @@ Maintainer: Ariel Shaqed (Scolnicov) <arielshaqed@google.com>
 Build-Depends: debhelper (>= 8.0.0), autotools-dev, liboping-dev, libltdl-dev,
  linux-libc-dev, protobuf-c-compiler
 Standards-Version: 3.9.4
+Version: 5.4.2-1
 #Homepage: <insert the upstream URL, if relevant>
 #Vcs-Git: git://git.debian.org/collab-maint/collectd-td.git
 Vcs-Browser: https://github.com/GoogleCloudPlatform/collectd-netperf/tree/netperf-deb-pkg
