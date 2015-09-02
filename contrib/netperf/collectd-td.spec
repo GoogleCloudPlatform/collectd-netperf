@@ -231,11 +231,11 @@
 %define with_xmms 0%{!?_without_xmms:0}
 
 Summary:	Statistics collection daemon for filling RRD files
-Name:		collectd
-Version:	5.4.2.890.gf553206
+Name:		collectd-td
+Version:	5.4.2.926.gcc74cc0
 Release:	2%{?dist}
 URL:		https://github.com/GoogleCloudPlatform/collectd-netperf
-Source:		collectd-5.4.2.890.gf553206.tar.gz
+Source:		collectd-td-5.4.2.926.gcc74cc0.tar.bz2
 License:	GPLv2, MIT
 Group:		System Environment/Daemons
 BuildRoot:	%{_tmppath}/%{name}-%{version}-root
@@ -1758,7 +1758,7 @@ rm -rf %{buildroot}
 %endif
 %{__install} -Dp -m0644 contrib/netperf/netperf.cgroup %{buildroot}%{_cgroupdir}/netperf.cgroup
 %{__install} -Dp -m0644 contrib/netperf/sysconfig-collectd-td %{buildroot}%{_sysconfigddir}/collectd-td
-%{__install} -d %{buildroot}%{_sharedstatedir}/collectd/
+%{__install} -d %{buildroot}%{_sharedstatedir}/collectd-td/
 %{__install} -d %{buildroot}%{_sysconfdir}/collectd.d/
 
 %{__mkdir} -p %{buildroot}/opt/libgrpc-td/lib/
@@ -1781,7 +1781,7 @@ rm -rf %{buildroot}
 ### Clean up docs
 find contrib/ -type f -exec %{__chmod} a-x {} \;
 # *.la files shouldn't be distributed.
-rm -f %{buildroot}/%{_libdir}/{collectd/,}*.la
+rm -f %{buildroot}/%{_libdir}/{collectd-td/,}*.la
 
 # Remove Perl hidden .packlist files.
 find %{buildroot} -type f -name .packlist -delete
@@ -1789,8 +1789,8 @@ find %{buildroot} -type f -name .packlist -delete
 find %{buildroot} -type f -name perllocal.pod -delete
 
 %if ! %{with_java}
-rm -f %{buildroot}%{_datadir}/collectd/java/collectd-api.jar
-rm -f %{buildroot}%{_datadir}/collectd/java/generic-jmx.jar
+rm -f %{buildroot}%{_datadir}/collectd-td/java/collectd-api.jar
+rm -f %{buildroot}%{_datadir}/collectd-td/java/generic-jmx.jar
 rm -f %{buildroot}%{_mandir}/man5/collectd-java.5*
 %endif
 
@@ -1803,7 +1803,7 @@ rm -fr %{buildroot}%{_libdir}/perl5/
 %endif
 
 %if ! %{with_postgresql}
-rm -f %{buildroot}%{_datadir}/collectd/postgresql_default.conf
+rm -f %{buildroot}%{_datadir}/collectd-td/postgresql_default.conf
 %endif
 
 %if ! %{with_python}
@@ -1877,8 +1877,8 @@ fi
 %{_sbindir}/collectd-td
 %{_sbindir}/collectdmon
 %{_bindir}/simple_respawn
-%{_datadir}/collectd/types.db
-%{_sharedstatedir}/collectd
+%{_datadir}/collectd-td/types.db
+%{_sharedstatedir}/collectd-td
 %{_mandir}/man1/collectd.1*
 %{_mandir}/man1/collectdmon.1*
 %{_mandir}/man5/collectd-email.5*
@@ -2088,10 +2088,10 @@ fi
 %endif
 
 %files -n libcollectdclient-devel
-%{_includedir}/collectd/client.h
-%{_includedir}/collectd/network.h
-%{_includedir}/collectd/network_buffer.h
-%{_includedir}/collectd/lcc_features.h
+%{_includedir}/collectd-td/client.h
+%{_includedir}/collectd-td/network.h
+%{_includedir}/collectd-td/network_buffer.h
+%{_includedir}/collectd-td/lcc_features.h
 %{_libdir}/pkgconfig/libcollectdclient.pc
 
 %files -n libcollectdclient
@@ -2198,8 +2198,8 @@ fi
 
 %if %{with_java}
 %files java
-%{_datadir}/collectd/java/collectd-api.jar
-%{_datadir}/collectd/java/generic-jmx.jar
+%{_datadir}/collectd-td/java/collectd-api.jar
+%{_datadir}/collectd-td/java/generic-jmx.jar
 %{_libdir}/%{name}/java.so
 %{_mandir}/man5/collectd-java.5*
 %endif
@@ -2290,7 +2290,7 @@ fi
 
 %if %{with_postgresql}
 %files postgresql
-%{_datadir}/collectd/postgresql_default.conf
+%{_datadir}/collectd-td/postgresql_default.conf
 %{_libdir}/%{name}/postgresql.so
 %endif
 
