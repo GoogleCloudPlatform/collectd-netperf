@@ -1,11 +1,29 @@
-/* TODO(arielshaqed): License and other boilerplate
+// Copyright 2015 Google Inc. All Rights Reserved.
+
+/*
+ * Permission is hereby granted, free of charge, to any person
+ * obtaining a copy of this software and associated documentation
+ * files (the "Software"), to deal in the Software without
+ * restriction, including without limitation the rights to use, copy,
+ * modify, merge, publish, distribute, sublicense, and/or sell copies
+ * of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
  *
- * https://collectd.org/wiki/index.php/Plugin_architecture says:
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
  *
- * "All *.c-files must include a copyright notice and license
- * information. The license must be compatible to collectd's own
- * license, the GPL 2. Unless you have a good reason to split up your
- * plugin into multiple files, please put everything into one .c-file."
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
+ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
+ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ *
+ * Authors:
+ *   Ariel Shaqed (Scolnicov) <arielshaqed+netperf@google.com>
+ *   Yosef Heskia <yosih+netperfgoogle.com>
  */
 
 #include "grpc/grpc.h"
