@@ -233,7 +233,7 @@
 Summary:	Statistics collection daemon for filling RRD files
 Name:		collectd
 Version:	5.4.2.890.gf553206
-Release:	1%{?dist}
+Release:	2%{?dist}
 URL:		https://github.com/GoogleCloudPlatform/collectd-netperf
 Source:		collectd-5.4.2.890.gf553206.tar.gz
 License:	GPLv2, MIT
