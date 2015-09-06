@@ -1,4 +1,7 @@
-# Edited by arielshaqed to build OUR plugins (and little else)
+# Edited by arielshaqed to build OUR plugins (and little else).
+#
+# This file is edited by autoconf during configuration to set the
+# version numbers.
 
 #
 # q: What is this ?
@@ -232,10 +235,10 @@
 
 Summary:	Statistics collection daemon for filling RRD files
 Name:		collectd-td
-Version:	5.4.2.926.gcc74cc0
+Version:	@PACKAGE_VERSION@
 Release:	2%{?dist}
 URL:		https://github.com/GoogleCloudPlatform/collectd-netperf
-Source:		collectd-td-5.4.2.926.gcc74cc0.tar.bz2
+Source:		collectd-td-@PACKAGE_VERSION@.tar.bz2
 License:	GPLv2, MIT
 Group:		System Environment/Daemons
 BuildRoot:	%{_tmppath}/%{name}-%{version}-root
@@ -1833,8 +1836,16 @@ if [ $1 -eq 2 ]; then
 fi
 %systemd_post collectd.service
 %else
-/sbin/chkconfig --add cgconfig || :
-/sbin/chkconfig --add collectd-td || :
+/sbin/chkconfig --add cgconfig ||
+    echo 2>&1 '"chkconfig --add cgconfig" failed (keep going)'
+/sbin/chkconfig --add collectd-td ||
+    echo 2>&1 '"chkconfig --add collectd" failed (keep going)'
+levels=`/bin/sed -r -n 's/^ *# *chkconfig: *([0-9]+).*$/\1/p' \
+        /etc/init.d/collectd-td`
+/sbin/chkconfig --levels="$levels" cgconfig on ||
+    echo 2>&1 '"chkconfig --levels=$levels cgconfig on" failed (keep going)'
+/sbin/chkconfig collectd-td on ||
+    echo 2>&1 '"chkconfig collectd-td on" failed (keep going)'
 %endif
 
 %preun

@@ -11,8 +11,17 @@
 #         3.      chkconfig --list collectd-td    # make sure
 #         4.      service collectd-td start
 #
-# description: collectd to report fine-grained TCP statistics to Google \
+#
+### BEGIN INIT INFO
+# Provides: collectd-td
+# Required-Start: cgconfig $network
+# Required-Stop: $network
+# Default-Start: 2 3 4 5
+# Default-Stop: 0 1 6
+# Short-Description: collectd to report fine-grained TCP statistics to Google \
 #              Cloud Latency.
+### END INIT INFO
+#
 # chkconfig: 2345 90 10
 # processname: collectd-td
 
