@@ -146,6 +146,11 @@
 # include <sys/socketvar.h>
 #endif /* KERNEL_AIX */
 
+/* Bug: Language spec does NOT guarantee propogation of values between
+ * threads for a volatile variable. Do it anyway, in practice it happens.
+ */
+static volatile _Bool shutdown_module = 0;
+
 #if KERNEL_LINUX
 #if HAVE_STRUCT_LINUX_INET_DIAG_REQ
 struct nlreq {
@@ -188,6 +193,7 @@ struct counter_cache_entry_s {
 typedef struct counter_cache_entry_s *counter_cache_entry_t;
 static pthread_mutex_t counter_cache_lock = PTHREAD_MUTEX_INITIALIZER;
 static c_avl_tree_t   *counter_cache_tree = NULL;
+static pthread_t counter_cache_cleanup_thread;
 #endif
 
 static const char *tcp_state[] =
@@ -384,8 +390,7 @@ exit:
 
 /* Cleans up cache by removing entries last updated more than
  * counter_cache_timeout before t.  Returns number of elements removed. */
-/* BUG: NOT CALLED YET! */
-size_t counter_cache_cleanup(cdtime_t t) {
+static size_t counter_cache_cleanup(cdtime_t t) {
   size_t i;
   char **remove_keys = NULL;
   size_t remove_keys_num = 0;
@@ -430,7 +435,17 @@ size_t counter_cache_cleanup(cdtime_t t) {
   }
 
   pthread_mutex_unlock(&counter_cache_lock);
+
+  INFO("Cleaned up %zu keys", remove_keys_num);
   return remove_keys_num;
+}
+
+static void *call_counter_cache_cleanup(void *unused) {
+  while (!shutdown_module) {
+    counter_cache_cleanup(cdtime());
+    sleep(CDTIME_T_TO_DOUBLE(counter_cache_timeout) / 4 + 1);
+  }
+  return NULL;
 }
 
 static uint64_t get_max_for_field_type(enum tcpi_field_type type) {
@@ -949,11 +964,13 @@ static void conn_handle_tcpi(
             else {
               vl->values[value_index].counter = 0;
             }
-            INFO("%s%s; +%llu --> %" PRIu64,
-                 vl->plugin_instance,
-                 in_cache ? "" : " (new)",
-                 vl->values[value_index].counter,
-                 value);
+            if (vl->values[value_index].counter > 0) {
+              DEBUG("%s%s; +%llu --> %" PRIu64,
+                    vl->plugin_instance,
+                    in_cache ? "" : " (new)",
+                    vl->values[value_index].counter,
+                    value);
+            }
             entry->values[counter_field_index] = value;
             value_index++;
             counter_field_index++;
@@ -1358,8 +1375,19 @@ static int conn_init (void)
     port_collect_listening = 1;
 
 #ifdef HAVE_LINUX_INET_DIAG_H
-  if (num_tcpi_counter_fields > 0)
+  if (num_tcpi_counter_fields > 0) {
+    int pthread_status;
     counter_cache_init();
+    pthread_status =
+        pthread_create(&counter_cache_cleanup_thread, NULL,
+                       call_counter_cache_cleanup, NULL);
+    if (pthread_status != 0) {
+      char errbuf[1024];
+      ERROR("tcpconns conn_init (counter_cache): pthread_create failed: %s",
+            sstrerror(pthread_status, errbuf, sizeof(errbuf)));
+      ERROR("\tCache cleanup will NOT occur.");
+    }
+  }
   if (report_by_connections) {  /* Define what dataset we shall be reporting */
     data_set_t data_set;
     size_t i;
@@ -1711,20 +1739,28 @@ static int conn_read (void)
 }
 #endif /* KERNEL_AIX */
 
+static int conn_shutdown(void) {
+  /* Signal other threads (currently only the cache cleanup thread for
+   * fine-grained tcp_info reporting on Linux) to stop. */
+  shutdown_module = 1;
+  return 0;
+}
+
 void module_register (void)
 {
-	plugin_register_config ("tcpconns", conn_config,
-			config_keys, config_keys_num);
+  plugin_register_config("tcpconns", conn_config, config_keys, config_keys_num);
 #if KERNEL_LINUX
-	plugin_register_init ("tcpconns", conn_init);
+  plugin_register_init ("tcpconns", conn_init);
 #elif HAVE_SYSCTLBYNAME
-	/* no initialization */
+  /* no initialization */
 #elif HAVE_LIBKVM_NLIST
-	plugin_register_init ("tcpconns", conn_init);
+  plugin_register_init ("tcpconns", conn_init);
 #elif KERNEL_AIX
-	/* no initialization */
+  /* no initialization */
 #endif
-	plugin_register_read ("tcpconns", conn_read);
+  plugin_register_read ("tcpconns", conn_read);
+
+  plugin_register_shutdown("tcpconns", conn_shutdown);
 } /* void module_register */
 
 /*
