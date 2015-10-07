@@ -63,6 +63,7 @@
 #include "safe_iop.h"
 #include "utils_avltree.h"
 
+#include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -352,17 +353,18 @@ static void counter_cache_free_entry(counter_cache_entry_t entry) {
  * last_update_time or set any values for entry, you need to do that
  * yourself. */
 static _Bool get_counter_cache_entry(char *key, counter_cache_entry_t *entry) {
-  int ret = 0;
   int rc;
+  int ret = 1;
   pthread_mutex_lock(&counter_cache_lock);
   if (c_avl_get(counter_cache_tree, key, (void**)entry) == 0)
-    return 1;
+    goto exit;
   /* Not found: create a new instance */
+  ret = 0;
   key = strdup(key);
   *entry = malloc(sizeof(**entry));
   (*entry)->last_update_time = 0;
   (*entry)->values = calloc(num_tcpi_counter_fields, sizeof(*(*entry)->values));
-  rc = c_avl_insert(counter_cache_tree, key, entry);
+  rc = c_avl_insert(counter_cache_tree, key, *entry);
   if (rc > 0) {
     ERROR("[I; leak] "
           "Cache inconsistent: expected to insert a new element for %s",
@@ -373,8 +375,8 @@ static _Bool get_counter_cache_entry(char *key, counter_cache_entry_t *entry) {
     sfree(key);
     counter_cache_free_entry(*entry);
     *entry = NULL;
+    goto exit;
   }
-  ret = 1;
 exit:
   pthread_mutex_unlock(&counter_cache_lock);
   return ret;
@@ -443,7 +445,7 @@ static uint64_t get_max_for_field_type(enum tcpi_field_type type) {
 /* Returns a wraparound-adjusted delta for going from old to new in field of
  * given type. Values > counter_max_delta are ignored and return 0. */
 static uint64_t get_wraparound_delta(
-    enum tcpi_field_type type, uint64_t old, uint64_t new) {
+    enum tcpi_field_type type, uint64_t new, uint64_t old) {
   uint64_t delta;
   if (old <= new) {
     /* Likely case: no wraparound */
@@ -939,15 +941,21 @@ static void conn_handle_tcpi(
                says should be divided by delta-T) to compute a simple delta. */
             assert(num_tcpi_counter_fields > 0);
             if (in_cache) {
-              vl->values[value_index++].counter =
+              vl->values[value_index].counter =
                   get_wraparound_delta(field->tcpi_type,
                                        value,
                                        entry->values[counter_field_index]);
             }
             else {
-              vl->values[value_index++].counter = 0;
+              vl->values[value_index].counter = 0;
             }
-            /* BUG: Update cache entry! */
+            INFO("%s%s; +%llu --> %" PRIu64,
+                 vl->plugin_instance,
+                 in_cache ? "" : " (new)",
+                 vl->values[value_index].counter,
+                 value);
+            entry->values[counter_field_index] = value;
+            value_index++;
             counter_field_index++;
             break;
           }
@@ -964,6 +972,7 @@ static void conn_handle_tcpi(
             break;
         }
     }
+    entry->last_update_time = cdtime();
     if (ok) {
       vl->values_len = value_index;
       value_list_batch_release(batch);
@@ -1367,8 +1376,14 @@ static int conn_init (void)
       strncpy(data_set.ds[i].name, tcpi_fields_to_report[i].name,
               sizeof(data_set.ds[i].name));
       data_set.ds[i].type = tcpi_fields_to_report[i].ds_type;
-      data_set.ds[i].min = NAN;
-      data_set.ds[i].max = NAN;
+      if (data_set.ds[i].type == DS_TYPE_COUNTER) {
+        data_set.ds[i].min = 0;
+        data_set.ds[i].max = counter_max_delta;
+      }
+      else {
+        data_set.ds[i].min = NAN;
+        data_set.ds[i].max = NAN;
+      }
     }
     if (plugin_unregister_data_set ("tcp_connections_perf") < 0) {
       WARNING ("TCPConns plugin: "
