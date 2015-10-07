@@ -174,16 +174,16 @@ static bool encode_int_values(
         continue;
     }
 
-      int_value.label = make_string(ds->ds[i].name);
-      int_value.has_value = true;
-      int_value.value = value;
-      if (!pb_encode_tag_for_field(stream, field))
-        return false;
-      if (!pb_encode_submessage(
-              stream,
-              google_internal_cloudlatencytest_v2_IntValue_fields,
-              &int_value))
-        return false;
+    int_value.label = make_string(ds->ds[i].name);
+    int_value.has_value = true;
+    int_value.value = value;
+    if (!pb_encode_tag_for_field(stream, field))
+      return false;
+    if (!pb_encode_submessage(
+            stream,
+            google_internal_cloudlatencytest_v2_IntValue_fields,
+            &int_value))
+      return false;
   }
   return true;
 }
