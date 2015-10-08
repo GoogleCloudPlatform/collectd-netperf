@@ -61,7 +61,9 @@
 #include "common.h"
 #include "plugin.h"
 #include "safe_iop.h"
+#include "utils_avltree.h"
 
+#include <inttypes.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -144,6 +146,11 @@
 # include <sys/socketvar.h>
 #endif /* KERNEL_AIX */
 
+/* Bug: Language spec does NOT guarantee propogation of values between
+ * threads for a volatile variable. Do it anyway, in practice it happens.
+ */
+static volatile _Bool shutdown_module = 0;
+
 #if KERNEL_LINUX
 #if HAVE_STRUCT_LINUX_INET_DIAG_REQ
 struct nlreq {
@@ -160,9 +167,7 @@ enum tcpi_field_type {
 #define TCPI_FIELD_TYPE_SIZE(type) ((size_t)type)
 struct tcpi_field_selector {
   const char *name;  /* Name of value_list field to report, NULL for last */
-  int ds_type;       /* TODO(arielshaqed): How can we report 64-bit
-                      * counters? (Ours are probably DS_TYPE_COUNTER,
-                      * maybe use that?) */
+  int ds_type;       /* TODO(arielshaqed): No way to report 64-bit values */
   enum tcpi_field_type tcpi_type;
   uint32_t offset;  /* Offset inside tcp_info to read field. Must be aligned. */
   /* TODO(arielshaqed): States in which to record the field? */
@@ -171,6 +176,24 @@ struct tcpi_field_selector {
 static struct tcpi_field_selector *tcpi_fields_to_report = NULL;
 static size_t num_tcpi_fields_to_report = 0;
 static size_t tcpi_fields_to_report_size = 0;
+static size_t num_tcpi_counter_fields = 0;
+
+static uint64_t counter_max_delta = 1000000;
+
+/* Cache for computing deltas of DELTA values. */
+static cdtime_t counter_cache_timeout = DOUBLE_TO_CDTIME_T(120.0);
+struct counter_cache_entry_s {
+  /* Cache entry holds num_tcpi_counter_fields values -- one 64-bit value
+   * for every COUNTER entry in order in tcpi_fields_to_report, This is
+   * later used to compute a new value including wrap-around. */
+  uint64_t *values;
+
+  cdtime_t last_update_time;
+};
+typedef struct counter_cache_entry_s counter_cache_entry_t;
+static pthread_mutex_t counter_cache_lock = PTHREAD_MUTEX_INITIALIZER;
+static c_avl_tree_t   *counter_cache_tree = NULL;
+static pthread_t counter_cache_cleanup_thread;
 #endif
 
 static const char *tcp_state[] =
@@ -318,6 +341,143 @@ static uint32_t count_total[TCP_STATE_MAX + 1];
 
 #if KERNEL_LINUX
 #if HAVE_STRUCT_LINUX_INET_DIAG_REQ
+
+static void counter_cache_init(void) {
+  pthread_mutex_lock(&counter_cache_lock);
+  counter_cache_tree = c_avl_create((void*) strcmp);
+  pthread_mutex_unlock(&counter_cache_lock);
+}
+
+static void counter_cache_free_entry(counter_cache_entry_t *entry) {
+  sfree(entry->values);
+  sfree(entry);
+}
+
+/* Returns true and fills in entry with counter cache entry for this key
+ * (connection instance id) if it exists; otherwise returns false and fills
+ * in entry to point at a new an (all-zeroes) entry. Does NOT change
+ * last_update_time or set any values for entry, you need to do that
+ * yourself. */
+static _Bool get_counter_cache_entry(char *key, counter_cache_entry_t **entry) {
+  int rc;
+  int ret = 1;
+  pthread_mutex_lock(&counter_cache_lock);
+  if (c_avl_get(counter_cache_tree, key, (void**)entry) == 0)
+    goto exit;
+  /* Not found: create a new instance */
+  ret = 0;
+  key = strdup(key);
+  *entry = malloc(sizeof(**entry));
+  (*entry)->last_update_time = 0;
+  (*entry)->values = calloc(num_tcpi_counter_fields, sizeof(*(*entry)->values));
+  rc = c_avl_insert(counter_cache_tree, key, *entry);
+  if (rc > 0) {
+    ERROR("[I; leak] "
+          "Cache inconsistent: expected to insert a new element for %s",
+          key);
+    goto exit;
+  } else if (rc < 0) {
+    ERROR("[I; crash] Cache insert failed for %s", key);
+    sfree(key);
+    counter_cache_free_entry(*entry);
+    *entry = NULL;
+    goto exit;
+  }
+exit:
+  pthread_mutex_unlock(&counter_cache_lock);
+  return ret;
+}
+
+/* Cleans up cache by removing entries last updated more than
+ * counter_cache_timeout before t.  Returns number of elements removed. */
+static size_t counter_cache_cleanup(cdtime_t t) {
+  size_t i;
+  char **remove_keys = NULL;
+  size_t remove_keys_num = 0;
+  size_t remove_keys_size = 0;
+  c_avl_iterator_t *iter;
+  char *key;
+  counter_cache_entry_t *entry;
+  char t_str[32];
+
+  cdtime_to_iso8601(t_str, sizeof(t_str), t);
+  INFO("counter_cache_cleanup: Clean up @%s", t_str);
+
+  pthread_mutex_lock(&counter_cache_lock);
+  if (!counter_cache_tree)
+    /* Already freed during shutdown */
+    return 0;
+  iter = c_avl_get_iterator(counter_cache_tree);
+  while (c_avl_iterator_next(iter, (void**)&key, (void**)&entry) == 0) {
+    if (entry->last_update_time < t - counter_cache_timeout) {
+      cdtime_to_iso8601(t_str, sizeof(t_str), entry->last_update_time);
+      DEBUG("counter_cache_cleanup: Remove entry for %s (last update @%s)",
+            t_str);
+
+      if (remove_keys_size < remove_keys_num + 1) {
+        remove_keys_size *= 2;
+        if (remove_keys_size < remove_keys_num + 1)
+          remove_keys_size = remove_keys_num + 1;
+        remove_keys = realloc(
+            remove_keys, remove_keys_size * sizeof(*remove_keys));
+      }
+
+      remove_keys[remove_keys_num++] = key;
+    }
+  }
+  c_avl_iterator_destroy(iter);
+
+  for (i = 0; i < remove_keys_num; i++) {
+    entry = NULL;
+    if (!c_avl_remove(counter_cache_tree, remove_keys[i],
+                      NULL, (void**)&entry)) {
+      ERROR("[I] Key-to-remove %s no longer in tree", remove_keys[i]);
+    } else if (entry) {
+      sfree(remove_keys[i]);
+      counter_cache_free_entry(entry);
+    }
+  }
+  sfree(remove_keys);
+
+  pthread_mutex_unlock(&counter_cache_lock);
+
+  INFO("Cleaned up %zu keys", remove_keys_num);
+  return remove_keys_num;
+}
+
+static void *call_counter_cache_cleanup(void *unused) {
+  while (!shutdown_module) {
+    counter_cache_cleanup(cdtime());
+    sleep(CDTIME_T_TO_DOUBLE(counter_cache_timeout) / 4 + 1);
+  }
+  pthread_exit(NULL);
+  return NULL;  /* UNREACHED */
+}
+
+static uint64_t get_max_for_field_type(enum tcpi_field_type type) {
+  switch(type) {
+    case UINT8: return 1ULL << 8;
+    case UINT32: return 1ULL << 32;
+    case UINT64: return 0;  /* Arithmetic works when adding and subtracting. */
+    default: return 0;      /* Impossible, but this value might be good. */
+  }
+}
+
+/* Returns a wraparound-adjusted delta for going from old to new in field of
+ * given type. Values > counter_max_delta are ignored and return 0. */
+static uint64_t get_wraparound_delta(
+    enum tcpi_field_type type, uint64_t new, uint64_t old) {
+  uint64_t delta;
+  if (old <= new) {
+    /* Likely case: no wraparound */
+    delta = new - old;
+  }
+  else {
+    delta = get_max_for_field_type(type) - (old - new);
+  }
+  return delta <= counter_max_delta ? delta : 0;
+}
+
 static _Bool parse_ds_type(const char *str, int *ds_type) {
 #define STR_CASE(name) do {                               \
       if (strcasecmp(str, #name) == 0) {                  \
@@ -377,6 +537,8 @@ static _Bool parse_tcpinfo_field_selector(
     ERROR ("Bad DS_TYPE \"%s\" in field selector \"%s\"", token, selector_orig);
     goto exit;
   }
+  if (field->ds_type == DS_TYPE_COUNTER)
+    num_tcpi_counter_fields++;
   if (!(token = strtok_r(NULL, " \t\n,", &parse_ptr))) {
     ERROR ("Field selector \"%s\" missing C_TYPE:OFFSET", selector_orig);
     goto exit;
@@ -743,7 +905,10 @@ static void conn_handle_tcpi(
     const char *state_name = TCP_STATE_MIN <= state && state <= TCP_STATE_MAX ?
         tcp_state[state] : "UNKNOWN";
     int tcpi_field_index;
+    int counter_field_index;
     int value_index;
+    counter_cache_entry_t *entry;
+    _Bool in_cache = 0;
     _Bool ok = 1;
 
     vl->values = calloc(num_tcpi_fields_to_report, sizeof(value_t));
@@ -752,7 +917,11 @@ static void conn_handle_tcpi(
     snprintf(vl->plugin_instance, sizeof (vl->plugin_instance),
              "%s:%u_%s:%u_%s", src, sport, dst, dport, state_name);
     sstrncpy (vl->type, "tcp_connections_perf", sizeof (vl->type));
-    for (tcpi_field_index = 0, value_index = 0;
+
+    if (num_tcpi_counter_fields > 0)
+      in_cache = get_counter_cache_entry(vl->plugin_instance, &entry);
+
+    for (tcpi_field_index = 0, value_index = 0, counter_field_index = 0;
          tcpi_field_index < num_tcpi_fields_to_report;
          tcpi_field_index++) {
         const struct tcpi_field_selector *field =
@@ -787,9 +956,32 @@ static void conn_handle_tcpi(
             continue;
         }
         switch (field->ds_type) {
-          case DS_TYPE_COUNTER:
-            vl->values[value_index++].counter = value;
+          case DS_TYPE_COUNTER: {
+            /* Overload "COUNTER" (which
+               https://collectd.org/wiki/index.php/Data_source#Data_source_types
+               says should be divided by delta-T) to compute a simple delta. */
+            assert(num_tcpi_counter_fields > 0);
+            if (in_cache) {
+              vl->values[value_index].counter =
+                  get_wraparound_delta(field->tcpi_type,
+                                       value,
+                                       entry->values[counter_field_index]);
+            }
+            else {
+              vl->values[value_index].counter = 0;
+            }
+            if (vl->values[value_index].counter > 0) {
+              DEBUG("%s%s; +%llu --> %" PRIu64,
+                    vl->plugin_instance,
+                    in_cache ? "" : " (new)",
+                    vl->values[value_index].counter,
+                    value);
+            }
+            entry->values[counter_field_index] = value;
+            value_index++;
+            counter_field_index++;
             break;
+          }
           case DS_TYPE_GAUGE:
             vl->values[value_index++].gauge = value;
             break;
@@ -799,11 +991,11 @@ static void conn_handle_tcpi(
           case DS_TYPE_ABSOLUTE:
             vl->values[value_index++].absolute = value;
             break;
-          default:
-            /* Read configuration should have caught this error */
+          default: /* Read configuration should have caught this error */
             break;
         }
     }
+    entry->last_update_time = cdtime();
     if (ok) {
       vl->values_len = value_index;
       value_list_batch_release(batch);
@@ -1140,6 +1332,12 @@ static int conn_config (const char *key, const char *value)
   else if (strcasecmp (key, "ConnectionsAgeLimitSecs") == 0) {
     connections_age_limit_msecs = atof(value) * 1000;
   }
+  else if (strcasecmp (key, "CounterMaxDelta") == 0) {
+    counter_max_delta = atoi(value);
+  }
+  else if (strcasecmp (key, "CounterCacheTimeoutSecs") == 0) {
+    counter_cache_timeout = DOUBLE_TO_CDTIME_T(atof(value));
+  }
   else if (strcasecmp (key, "TCPInfoField") == 0) {
     struct tcpi_field_selector field;
     field.name = NULL;
@@ -1183,6 +1381,19 @@ static int conn_init (void)
     port_collect_listening = 1;
 
 #ifdef HAVE_LINUX_INET_DIAG_H
+  if (num_tcpi_counter_fields > 0) {
+    int pthread_status;
+    counter_cache_init();
+    pthread_status =
+        pthread_create(&counter_cache_cleanup_thread, NULL,
+                       call_counter_cache_cleanup, NULL);
+    if (pthread_status != 0) {
+      char errbuf[1024];
+      ERROR("tcpconns conn_init (counter_cache): pthread_create failed: %s",
+            sstrerror(pthread_status, errbuf, sizeof(errbuf)));
+      ERROR("\tCache cleanup will NOT occur.");
+    }
+  }
   if (report_by_connections) {  /* Define what dataset we shall be reporting */
     data_set_t data_set;
     size_t i;
@@ -1199,8 +1410,14 @@ static int conn_init (void)
       strncpy(data_set.ds[i].name, tcpi_fields_to_report[i].name,
               sizeof(data_set.ds[i].name));
       data_set.ds[i].type = tcpi_fields_to_report[i].ds_type;
-      data_set.ds[i].min = NAN;
-      data_set.ds[i].max = NAN;
+      if (data_set.ds[i].type == DS_TYPE_COUNTER) {
+        data_set.ds[i].min = 0;
+        data_set.ds[i].max = counter_max_delta;
+      }
+      else {
+        data_set.ds[i].min = NAN;
+        data_set.ds[i].max = NAN;
+      }
     }
     if (plugin_unregister_data_set ("tcp_connections_perf") < 0) {
       WARNING ("TCPConns plugin: "
@@ -1528,20 +1745,48 @@ static int conn_read (void)
 }
 #endif /* KERNEL_AIX */
 
+static int conn_shutdown(void) {
+  /* Signal other threads (currently only the cache cleanup thread for
+   * fine-grained tcp_info reporting on Linux) to stop. */
+  shutdown_module = 1;
+
+  /* Clean up the cache. This lock can only contend with cleanup, so
+   * it doesn't matter if we block it for a few msec. */
+  {
+    char *key;
+    counter_cache_entry_t *entry;
+    size_t cache_size_freed = 0;
+    pthread_mutex_lock(&counter_cache_lock);
+    while (c_avl_pick(counter_cache_tree, (void**)&key, (void**)&entry) == 0) {
+      sfree(key);
+      counter_cache_free_entry(entry);
+      cache_size_freed++;
+    }
+    c_avl_destroy(counter_cache_tree);
+    counter_cache_tree = NULL;
+    pthread_mutex_unlock(&counter_cache_lock);
+    INFO("tcpconns conn_shutdown: released %zu cache elements",
+         cache_size_freed);
+  }
+
+  return 0;
+}
+
 void module_register (void)
 {
-	plugin_register_config ("tcpconns", conn_config,
-			config_keys, config_keys_num);
+  plugin_register_config("tcpconns", conn_config, config_keys, config_keys_num);
 #if KERNEL_LINUX
-	plugin_register_init ("tcpconns", conn_init);
+  plugin_register_init ("tcpconns", conn_init);
 #elif HAVE_SYSCTLBYNAME
-	/* no initialization */
+  /* no initialization */
 #elif HAVE_LIBKVM_NLIST
-	plugin_register_init ("tcpconns", conn_init);
+  plugin_register_init ("tcpconns", conn_init);
 #elif KERNEL_AIX
-	/* no initialization */
+  /* no initialization */
 #endif
-	plugin_register_read ("tcpconns", conn_read);
+  plugin_register_read ("tcpconns", conn_read);
+
+  plugin_register_shutdown("tcpconns", conn_shutdown);
 } /* void module_register */
 
 /*
