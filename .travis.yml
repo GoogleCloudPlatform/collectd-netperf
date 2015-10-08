@@ -1,0 +1,9 @@
+language: cpp
+
+before_install:
+  - sudo sh -c 'echo deb http://http.debian.net/debian jessie-backports main > /etc/apt/sources.list'
+  - sudo apt-get install libgrpc-dev
+
+compiler:
+  - gcc
+  - clang
