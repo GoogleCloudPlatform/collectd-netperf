@@ -190,7 +190,7 @@ struct counter_cache_entry_s {
 
   cdtime_t last_update_time;
 };
-typedef struct counter_cache_entry_s *counter_cache_entry_t;
+typedef struct counter_cache_entry_s counter_cache_entry_t;
 static pthread_mutex_t counter_cache_lock = PTHREAD_MUTEX_INITIALIZER;
 static c_avl_tree_t   *counter_cache_tree = NULL;
 static pthread_t counter_cache_cleanup_thread;
@@ -348,7 +348,7 @@ static void counter_cache_init(void) {
   pthread_mutex_unlock(&counter_cache_lock);
 }
 
-static void counter_cache_free_entry(counter_cache_entry_t entry) {
+static void counter_cache_free_entry(counter_cache_entry_t *entry) {
   sfree(entry->values);
   sfree(entry);
 }
@@ -358,7 +358,7 @@ static void counter_cache_free_entry(counter_cache_entry_t entry) {
  * in entry to point at a new an (all-zeroes) entry. Does NOT change
  * last_update_time or set any values for entry, you need to do that
  * yourself. */
-static _Bool get_counter_cache_entry(char *key, counter_cache_entry_t *entry) {
+static _Bool get_counter_cache_entry(char *key, counter_cache_entry_t **entry) {
   int rc;
   int ret = 1;
   pthread_mutex_lock(&counter_cache_lock);
@@ -397,7 +397,7 @@ static size_t counter_cache_cleanup(cdtime_t t) {
   size_t remove_keys_size = 0;
   c_avl_iterator_t *iter;
   char *key;
-  counter_cache_entry_t entry;
+  counter_cache_entry_t *entry;
   char t_str[32];
 
   cdtime_to_iso8601(t_str, sizeof(t_str), t);
@@ -430,7 +430,7 @@ static size_t counter_cache_cleanup(cdtime_t t) {
       ERROR("[I] Key-to-remove %s no longer in tree", remove_keys[i]);
     } else if (entry) {
       sfree(remove_keys[i]);
-      sfree(entry);
+      counter_cache_free_entry(entry);
     }
   }
 
@@ -901,7 +901,7 @@ static void conn_handle_tcpi(
     int tcpi_field_index;
     int counter_field_index;
     int value_index;
-    counter_cache_entry_t entry;
+    counter_cache_entry_t *entry;
     _Bool in_cache = 0;
     _Bool ok = 1;
 
