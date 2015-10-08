@@ -404,6 +404,9 @@ static size_t counter_cache_cleanup(cdtime_t t) {
   INFO("counter_cache_cleanup: Clean up @%s", t_str);
 
   pthread_mutex_lock(&counter_cache_lock);
+  if (!counter_cache_tree)
+    /* Already freed during shutdown */
+    return 0;
   iter = c_avl_get_iterator(counter_cache_tree);
   while (c_avl_iterator_next(iter, (void**)&key, (void**)&entry) == 0) {
     if (entry->last_update_time < t - counter_cache_timeout) {
@@ -422,6 +425,7 @@ static size_t counter_cache_cleanup(cdtime_t t) {
       remove_keys[remove_keys_num++] = key;
     }
   }
+  c_avl_iterator_destroy(iter);
 
   for (i = 0; i < remove_keys_num; i++) {
     entry = NULL;
@@ -433,6 +437,7 @@ static size_t counter_cache_cleanup(cdtime_t t) {
       counter_cache_free_entry(entry);
     }
   }
+  sfree(remove_keys);
 
   pthread_mutex_unlock(&counter_cache_lock);
 
@@ -445,7 +450,8 @@ static void *call_counter_cache_cleanup(void *unused) {
     counter_cache_cleanup(cdtime());
     sleep(CDTIME_T_TO_DOUBLE(counter_cache_timeout) / 4 + 1);
   }
-  return NULL;
+  pthread_exit(NULL);
+  return NULL;  /* UNREACHED */
 }
 
 static uint64_t get_max_for_field_type(enum tcpi_field_type type) {
@@ -1743,6 +1749,26 @@ static int conn_shutdown(void) {
   /* Signal other threads (currently only the cache cleanup thread for
    * fine-grained tcp_info reporting on Linux) to stop. */
   shutdown_module = 1;
+
+  /* Clean up the cache. This lock can only contend with cleanup, so
+   * it doesn't matter if we block it for a few msec. */
+  {
+    char *key;
+    counter_cache_entry_t *entry;
+    size_t cache_size_freed = 0;
+    pthread_mutex_lock(&counter_cache_lock);
+    while (c_avl_pick(counter_cache_tree, (void**)&key, (void**)&entry) == 0) {
+      sfree(key);
+      counter_cache_free_entry(entry);
+      cache_size_freed++;
+    }
+    c_avl_destroy(counter_cache_tree);
+    counter_cache_tree = NULL;
+    pthread_mutex_unlock(&counter_cache_lock);
+    INFO("tcpconns conn_shutdown: released %zu cache elements",
+         cache_size_freed);
+  }
+
   return 0;
 }
 
