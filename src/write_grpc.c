@@ -73,8 +73,6 @@ typedef struct grpc_callback {
   char *grpc_method_name;
   gpr_mu mutex;  /* Locks cq and *_counter, for concurrent writes */
   grpc_completion_queue *cq;
-  size_t write_counter;
-  size_t write_accepted_counter;
   cdtime_t deadline;
   cdtime_t data_flush_interval;
   cdtime_t last_flush_start_time;
@@ -388,43 +386,50 @@ static bool slice_and_offset_ostream_callback(
 /* Returns a deadline timespec with delay time into the future */
 static gpr_timespec get_deadline(cdtime_t delay)
 {
-  gpr_timespec ret;
-  CDTIME_T_TO_TIMESPEC(cdtime() + delay, &ret);
-  return ret;
+  gpr_timespec now = gpr_now(GPR_CLOCK_REALTIME);
+  gpr_timespec delay_ts =
+      gpr_time_from_nanos(CDTIME_T_TO_NS(delay), GPR_TIMESPAN);
+  return gpr_time_add(now, delay_ts);
 }
 
-/* Empties cq.  If do_sleep, loops to wait until all writes were accepted or
- * cb->deadline passes; otherwise, loops until either all writes were
- * accepted or cq is empty.  Returns a true value if all writes were
- * accepted.  Must call with cb->mutex held. */
-static int process_cq(grpc_callback *cb, int do_sleep) {
+/* Waits deadline and handles a single event from cq and returns true, or
+ * returns false if waiting on the event times out.  Must call with
+ * cb->mutex held. */
+static bool process_cq(grpc_callback *cb, cdtime_t deadline) {
   grpc_event ev;
 
-  while (cb->write_accepted_counter < cb->write_counter) {
-    gpr_timespec sleep_until = get_deadline(do_sleep ? cb->deadline : 0);
-    ev = grpc_completion_queue_next(cb->cq, sleep_until, NULL);
+  gpr_timespec sleep_until = get_deadline(deadline);
+  ev = grpc_completion_queue_next(cb->cq, sleep_until, NULL);
 
-    switch (ev.type) {
-      case GRPC_QUEUE_SHUTDOWN:
-        INFO("write_grpc process_cq: %s: queue shutting down "
-             "(%zu/%zu writes accepted)",
-              cb->host, cb->write_accepted_counter, cb->write_counter);
-        return 0;
-      case GRPC_QUEUE_TIMEOUT:
-        INFO("write_grpc process_cq: %s: timed out (%zu/%zu writes accepted)",
-             cb->host, cb->write_accepted_counter, cb->write_counter);
-        if (do_sleep)
-          WARNING("write_grpc process_cq: no response.");
-        return 0;
-      case GRPC_OP_COMPLETE:
-        break;
-      default:
-        WARNING("write_grpc process_cq: %s: [I] Unknown completion type %d",
-                cb->host, ev.type);
-    }
+  switch (ev.type) {
+    case GRPC_QUEUE_SHUTDOWN:
+      INFO("write_grpc process_cq: %s: queue shutting down", cb->host);
+      return true;
+    case GRPC_QUEUE_TIMEOUT:
+      if (deadline > 0)
+        WARNING("write_grpc process_cq: %s: timed out", cb->host);
+      return false;
+    case GRPC_OP_COMPLETE:
+      /* Best case: everything worked; common, so don't log */
+      return true;
+      break;
+    default:
+      WARNING("write_grpc process_cq: %s: [I] Unknown completion type %d",
+              cb->host, ev.type);
+      /* "false" (only) to prevent drain_cq from looping forever */
+      return false;
   }
+}
 
-  return 1;
+/* Drains queue without blocking. Returns number of events processed.
+ * Must call with cb->mutex held. */
+static int drain_cq(grpc_callback *cb) {
+  int n;
+  for (n = 0; process_cq(cb, 0); n++)
+    ;
+  if (n > 0)
+    INFO("write_grpc drain_cq: drained %d old events from CQ", n);
+  return n;
 }
 
 /* Accumulates buffer lengths into sum. Returns false on overflow */
@@ -518,6 +523,7 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
   cdtime_t current_time;
   uint64_t bytes_to_report = 0;
   _Bool report_skipped = 1;
+  int num_cq_events;
   int rc = 0;
 
   cb->last_flush_start_time = cdtime();
@@ -527,14 +533,9 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
   }
   report_skipped = 0;
 
-  /* If preceding write has not yet been accepted, sleep for it now, to
-   * avoid queuing outbound writes. This applies backpressure on the
-   * collectd write queue, keeping relatively few messages in gRPC. */
-  while (cb->write_accepted_counter < cb->write_counter) {
-    INFO("Wait for message %zu for %s to be accepted",
-         cb->write_counter, cb->host);
-    process_cq(cb, 1 /* Wait on CQ */);
-  }
+  /* Drain the queue in case previous writes were not immediately
+   * acknowledged. */
+  drain_cq(cb);
 
   encoded_stats_end = cb->next_index;
   if (timeout > 0) {
@@ -582,11 +583,14 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
       &initial_metadata_recv, &response, &trailing_metadata_recv,
       &status, &status_details, &status_details_capacity);
   call = grpc_channel_create_call(
-      cb->channel, NULL /* Parent call */, 0,
+      cb->channel,
+      NULL /* Parent call */,
+      0,
       cb->cq,
       cb->grpc_method_name,
       cb->host,
-      get_deadline(cb->deadline), NULL);
+      get_deadline(cb->deadline),
+      NULL);
 
   if (!call) {
     ERROR("write_grpc grpc_channel_create_call failed");
@@ -647,9 +651,10 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
     goto exit;
   }
 
-  /* (Don't read from stream) */
-
-  process_cq(cb, 0 /* don't sleep */);
+  /* CQ should be empty. */
+  if ((num_cq_events = drain_cq(cb)) > 0)
+    WARNING("write_grpc drain_cq: Unexpected %d elements in queue",
+            num_cq_events);
 
 exit:
   gpr_slice_unref(slice);
@@ -866,8 +871,6 @@ static int load_config(oconfig_item_t *ci)
   cb->channel = NULL;
   cb->grpc_method_name = NULL;
   cb->cq = NULL;
-  cb->write_counter = 0;
-  cb->write_accepted_counter = 0;
   cb->deadline = DOUBLE_TO_CDTIME_T(20.0);
   cb->data_flush_interval = DOUBLE_TO_CDTIME_T(DEFAULT_FLUSH_INTERVAL_SECONDS);
   cb->flush_thread_started = false;
