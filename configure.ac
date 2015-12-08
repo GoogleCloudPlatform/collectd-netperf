@@ -4614,7 +4614,8 @@ then
 	LDFLAGS="$LDFLAGS $with_grpc_ldflags"
 
 	AC_CHECK_LIB(grpc, grpc_channel_create_call, [with_grpc="yes"], [with_grpc="no (Symbol 'grpc_channel_create_call' not found)"], -lgpr -lpthread -ldl)
-	AC_CHECK_LIB(grpc, grpc_service_account_credentials_create, [with_grpc="yes"], [with_grpc="no (Crypto symbol 'grpc_service_account_credentials_create' not found)"], -lgpr -lpthread -ldl)
+	AC_CHECK_LIB(grpc, grpc_google_compute_engine_credentials_create, [with_grpc="yes"], [with_grpc="no (Symbol 'grpc_google_compute_engine_credentials_create' not found)"], -lgpr -lpthread -ldl)
+	AC_CHECK_LIB(grpc, grpc_service_account_jwt_access_credentials_create, [with_grpc="yes"], [with_grpc="no (Crypto symbol 'grpc_service_account_jwt_access_credentials_create' not found)"], -lgpr -lpthread -ldl)
 
 	CPPFLAGS="$SAVE_CPPFLAGS"
 	LDFLAGS="$SAVE_LDFLAGS"
