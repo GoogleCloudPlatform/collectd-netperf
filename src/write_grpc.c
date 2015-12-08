@@ -1,4 +1,4 @@
-// Copyright 2015 Google Inc. All Rights Reserved.
+/* Copyright 2015 Google Inc. All Rights Reserved. */
 
 /*
  * Permission is hereby granted, free of charge, to any person
@@ -27,6 +27,7 @@
  */
 
 #include "grpc/grpc.h"
+#include "grpc/byte_buffer.h"
 #include "grpc/grpc_security.h"
 #include "grpc/support/alloc.h"
 #include "grpc/support/host_port.h"
@@ -397,42 +398,29 @@ static gpr_timespec get_deadline(cdtime_t delay)
  * accepted or cq is empty.  Returns a true value if all writes were
  * accepted.  Must call with cb->mutex held. */
 static int process_cq(grpc_callback *cb, int do_sleep) {
-  grpc_event *ev;
+  grpc_event ev;
 
   while (cb->write_accepted_counter < cb->write_counter) {
     gpr_timespec sleep_until = get_deadline(do_sleep ? cb->deadline : 0);
-    ev = grpc_completion_queue_next(cb->cq, sleep_until);
-    if (!ev) {
-      if (do_sleep)
-        WARNING("write_grpc process_cq: "
-                "Emptied queue for %s, %zu/%zu writes accepted",
-                cb->host, cb->write_accepted_counter, cb->write_counter);
-      return 0;
-    }
-    switch (ev->type) {
-      case GRPC_WRITE_ACCEPTED:
-        INFO("write_grpc process_cb: %s: Write %zu/%zu accepted",
+    ev = grpc_completion_queue_next(cb->cq, sleep_until, NULL);
+
+    switch (ev.type) {
+      case GRPC_QUEUE_SHUTDOWN:
+        INFO("write_grpc process_cq: %s: queue shutting down "
+             "(%zu/%zu writes accepted)",
               cb->host, cb->write_accepted_counter, cb->write_counter);
-        cb->write_accepted_counter++;
-        break;
-      case GRPC_CLIENT_METADATA_READ:
-        INFO("write_grpc process_cb: %s: Metadata read", cb->host);
-        break;
-      case GRPC_READ:
-        if (!ev->data.read)
-          INFO("write_grpc process_cb: %s: NULL read", cb->host);
-        /* TODO(arielshaqed): Handle return code (actual payload is empty). */
-        break;
-      case GRPC_FINISHED:
-        INFO("write_grpc process_cb: %s: Finished", cb->host);
-        break;
-      case GRPC_FINISH_ACCEPTED:
-        INFO("write_grpc process_cb: %s: Finish accepted", cb->host);
+        return 0;
+      case GRPC_QUEUE_TIMEOUT:
+        INFO("write_grpc process_cq: %s: timed out (%zu/%zu writes accepted)",
+             cb->host, cb->write_accepted_counter, cb->write_counter);
+        if (do_sleep)
+          WARNING("write_grpc process_cq: no response.");
+        return 0;
+      case GRPC_OP_COMPLETE:
         break;
       default:
-        WARNING("write_grpc process_cq: %s: Unexpected event type %d",
-                cb->host, ev->type);
-        break;
+        WARNING("write_grpc process_cq: %s: [I] Unknown completion type %d",
+                cb->host, ev.type);
     }
   }
 
@@ -468,12 +456,16 @@ static size_t make_call_ops(
   *status_details = NULL;
   *status_details_capacity = 0;
 
-#define NEXT_OP(type) do { \
+#define NEXT_OP(type) do {                          \
     if (++op >= ops + ops_size) return -1;          \
-    op->op = type;                              \
+    op->op = type;                                  \
+    op->flags = 0;                                  \
+    op->reserved = NULL;                            \
   } while (0)
 
   op->op = GRPC_OP_SEND_INITIAL_METADATA;
+  op->flags = 0;
+  op->reserved = NULL;
   op->data.send_initial_metadata.count = 0;
 
   NEXT_OP(GRPC_OP_SEND_MESSAGE);
@@ -518,7 +510,7 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
   char *status_details = NULL;
   size_t status_details_capacity;
   grpc_call *call = NULL;
-  grpc_event *ev = NULL;
+  grpc_event ev = {0};
   grpc_call_error grpc_rc;
   size_t buffer_alloc_size;
   size_t i;
@@ -582,18 +574,19 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
   bytes_to_report = stream.bytes_written;
 
   slice_out = gpr_slice_sub_no_ref(slice, 0, stream.bytes_written);
-  byte_buffer = grpc_byte_buffer_create(&slice_out, 1);
+  /* TODO(arielshaqed): grpc_raw_compressed_byte_buffer_create? */
+  byte_buffer = grpc_raw_byte_buffer_create(&slice_out, 1);
 
   num_ops = make_call_ops(
       byte_buffer, ops, sizeof ops / sizeof ops[0],
       &initial_metadata_recv, &response, &trailing_metadata_recv,
       &status, &status_details, &status_details_capacity);
   call = grpc_channel_create_call(
-      cb->channel,
+      cb->channel, NULL /* Parent call */, 0,
       cb->cq,
       cb->grpc_method_name,
       cb->host,
-      get_deadline(cb->deadline));
+      get_deadline(cb->deadline), NULL);
 
   if (!call) {
     ERROR("write_grpc grpc_channel_create_call failed");
@@ -601,19 +594,15 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
     goto exit;
   }
 
-  if ((grpc_rc = grpc_call_start_batch(call, ops, num_ops, (void*)17) !=
+  if ((grpc_rc = grpc_call_start_batch(call, ops, num_ops, (void*)17, NULL) !=
        GRPC_CALL_OK)) {
     ERROR("write_grpc grpc_call_start_batch: failed %d", grpc_rc);
     rc = grpc_rc;
     goto exit;
   }
 
-  ev = grpc_completion_queue_next(cb->cq, gpr_inf_future);
-  if (!ev) {
-    ERROR("write_grpc grpc_completion_queue_next: no completion event");
-    rc = -1;
-    goto exit;
-  }
+  ev = grpc_completion_queue_next(
+      cb->cq, gpr_inf_future(GPR_CLOCK_REALTIME), NULL);
 
   if (response == NULL) {
     ERROR("[I] No response received from server");
@@ -630,7 +619,28 @@ static int do_flush_nolock(grpc_callback *cb, cdtime_t timeout) {
     goto exit;
   }
 
-  if (ev->data.op_complete != GRPC_OP_OK) {
+  switch (ev.type) {
+    case GRPC_QUEUE_SHUTDOWN:
+      INFO("write_grpc grpc_completion_queue_next: queue shutting down");
+      rc = -1;
+      goto exit;
+      break;  /* UNREACHED */
+    case GRPC_QUEUE_TIMEOUT:
+      WARNING("write_grpc grpc_completion_queue_next: [I] timeout?");
+      rc = -1;
+      goto exit;
+      break;  /* UNREACHED */
+    case GRPC_OP_COMPLETE:
+      break;
+    default:
+      WARNING("write_grpc grpc_completion_queue_next: "
+              "[I] Unknown completion %d", ev.type);
+      rc = -1;
+      goto exit;
+      break;  /* UNREACHED */
+  }
+
+  if (!ev.success) {
     ERROR("write_grpc grpc_completion_queue_next: completion failed: %s",
           status_details ? status_details : "<no details>");
     rc = -3;
@@ -645,7 +655,6 @@ exit:
   gpr_slice_unref(slice);
   if (byte_buffer) grpc_byte_buffer_destroy(byte_buffer);
   if (call) grpc_call_destroy(call);
-  if (ev) grpc_event_finish(ev);
   if (status_details) gpr_free(status_details);
   for (i = 0; i < encoded_stats_end; i++)
     free(cb->encoded_stats[i].buf);
@@ -810,80 +819,19 @@ exit:
  * from the GCE developer's console.  Returns JWT credentials (bound
  * to use only the gRPC channel service).
  */
-static grpc_credentials *get_client_credentials(
-    bool use_instance_credentials,
-    const char *service_account_json_filename)
-{
-  grpc_credentials *cred_client = NULL;
-
-  if (use_instance_credentials) {
-    cred_client = grpc_compute_engine_credentials_create();
-    if (cred_client != NULL) {
-      INFO("Loaded GCE credentials from instance metadata server");
-      if (service_account_json_filename != NULL) {
-        WARNING("Already have credentials; ignoring ServiceAccountJsonFile %s",
-                service_account_json_filename);
-      }
-      return cred_client;
-    }
-    /* Keep going: might succeed with a configured service account */
-    ERROR("Failed to fetch GCE credentials from instance metadata server");
-  }
-
-  if (service_account_json_filename != NULL) {
-    char json[8192];
-    ssize_t json_len;
-
-    if ((json_len = read_file_contents(
-            service_account_json_filename, json, sizeof(json) - 1)) < 0) {
-      ERROR("Failed to read ServiceAccountJsonFile %s",
-            service_account_json_filename);
-      return NULL;
-    }
-    json[json_len] = '\0';  /* Ensure readable string */
-    if (! (cred_client = grpc_jwt_credentials_create(
-            json, grpc_max_auth_token_lifetime))) {
-      ERROR("Failed to create credentials from ServiceAccountJsonFile %s",
-            service_account_json_filename);
-      return NULL;
-    }
-    return cred_client;
-  }
-
-  ERROR("Must specify UseInstanceCredentials or ServiceAccountJsonFile");
-  return NULL;
-}
-
-/* Returns cred bound with root CA for authenticating the server */
-static grpc_credentials *get_server_credentials(const char *root_pem_filename)
-{
-  grpc_credentials *cred_server_ssl = NULL;
-
-  // TODO(arielshaqed): Do we need this? Why not just get user to setenv?
-  if (root_pem_filename)
-    setenv("GRPC_DEFAULT_SSL_ROOTS_FILE_PATH", root_pem_filename, 1);
-  cred_server_ssl = grpc_ssl_credentials_create(NULL, NULL);
-  return cred_server_ssl;
-}
-
 /* Returns credentials for an authenticated connection */
 static grpc_credentials *get_credentials(
     bool use_instance_credentials,
     const char *service_account_json_filename,
     const char *root_pem_filename)
 {
-  grpc_credentials *cred_client = get_client_credentials(
-      use_instance_credentials, service_account_json_filename);
-  grpc_credentials *cred_server = get_server_credentials(root_pem_filename);
-  grpc_credentials *ret = NULL;
+  if (service_account_json_filename != NULL)
+    setenv(GRPC_GOOGLE_CREDENTIALS_ENV_VAR, service_account_json_filename, 1);
+  /* TODO(arielshaqed): Do we need this? Why not just get user to setenv? */
+  if (root_pem_filename)
+    setenv(GRPC_DEFAULT_SSL_ROOTS_FILE_PATH_ENV_VAR, root_pem_filename, 1);
 
-  if (cred_client && cred_server)
-    ret = grpc_composite_credentials_create(cred_server, cred_client);
-
-  if (cred_client) grpc_credentials_release(cred_client);
-  if (cred_server) grpc_credentials_release(cred_server);
-
-  return ret;
+  return grpc_google_default_credentials_create();
 }
 
 /* Shuts down gRPC systems. */
@@ -1098,12 +1046,13 @@ static int start_threads(void)
     else
       cb->flush_thread_started = true;
 
-    cb->channel = grpc_secure_channel_create(cb->cred, cb->host, &no_args);
+    cb->channel = grpc_secure_channel_create(
+        cb->cred, cb->host, &no_args, NULL);
     if (!cb->channel)
       /* Error already logged */
       return 2;
 
-    cb->cq = grpc_completion_queue_create();
+    cb->cq = grpc_completion_queue_create(NULL);
   }
 
   return 0;
